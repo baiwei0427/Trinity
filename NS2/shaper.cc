@@ -72,6 +72,23 @@ SHAPER::SHAPER() :shaper_timer_(this), init_(1)
 	bind("qlen_7_",&qlen_array[7]);
 }
 
+SHAPER::~SHAPER()
+{
+	//Clear the pending timer
+	shaper_timer_.cancel();
+	
+	//Free up the packet queues 
+	for(int i=0;i<max_queue_num;i++)
+	{
+		if (q_array[i]->length()!=0)
+		{
+			for (Packet *p=q_array[i]->head();p!=0;p=p->next_) 
+				Packet::free(p);
+		}
+		delete q_array[i];
+	}
+}
+
 //Callback function when receive an input packet
 void SHAPER::recv(Packet *p, Handler *)
 {
@@ -89,9 +106,10 @@ void SHAPER::recv(Packet *p, Handler *)
 		{
 			tokens_array[i]=bucket_array[i];
 		}
-		
 		init_=0;
 		
+		//Get current time
+		lastupdatetime_ = Scheduler::instance().clock();
 		//Start timer
 		shaper_timer_.resched(MTU*8/aggregate_rate());
 	}
@@ -133,6 +151,53 @@ void SHAPER_Timer::expire(Event* /*e*/)
 
 void SHAPER::timeout(int)
 {
+	//Get current time
+	double now=Scheduler::instance().clock();
+	
+	//For each queue
+	for(int i=0;i<queue_num_;i++)
+	{
+		//update tokens
+		tokens_array[i]+=(now-lastupdatetime_)*rate_array[i];
+		
+		//Release packets as long as there are enough tokens
+		while(q_array[i]->length()>0)
+		{
+			Packet *p=q_array[i]->head();
+			hdr_cmn *ch=hdr_cmn::access(p);
+			int pktsize = ch->size()<<3;
+			
+			if(tokens_array[i]>=pktsize)
+			{
+				p=q_array[i]->deque();
+				target_->recv(p);
+				tokens_array[i]-=pktsize;
+			}
+			else 
+			{
+				break;
+			}
+		}
+		
+		//If no packet in the queue now, ensure tokens should not be larger than bucket size
+		if(q_array[i]->length()==0)
+		{
+			if(tokens_array[i]>bucket_array[i])
+				tokens_array[i]=bucket_array[i];
+		}
+	}
+	
+	//Reset lastupdatetime_ to now
+	lastupdatetime_ = now;
+	//Start timer
 	shaper_timer_.resched(MTU*8/aggregate_rate());
 }
+
+static class SHAPERClass : public TclClass {
+public:
+	SHAPERClass() : TclClass ("SHAPER") {}
+	TclObject* create(int,const char*const*) {
+		return (new SHAPER());
+	}
+}class_shaper;
 

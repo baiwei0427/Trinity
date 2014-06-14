@@ -43,7 +43,6 @@ protected:
 	void recv(Packet *, Handler *); //receive an input packet
 	double getupdatedtokens(); //update tokens for multi-tenants
 	int command(int argc, const char*const* argv); //command function; reset values periodically
-	void enqueue_packet(Packet *, PacketQueue **); //classify and enqueue packets from multi-tenants 
 	
 	PacketQueue *q_array[max_queue_num]; //PacketQueue array for multi-tenants 
 	double tokens_array[max_queue_num]; //accumulated tokens array for multi-tenants
@@ -52,7 +51,7 @@ protected:
 	int qlen_array[max_queue_num]; //queue length array for multi-tenants
 	int queue_num_;	//number of queues. Each tenant has one dedicated PacketQueue for one NIC
 	
-	
+	double lastupdatetime_;
 	SHAPER_Timer shaper_timer_;	//timer for rate limiting
 	int init_;
 };
