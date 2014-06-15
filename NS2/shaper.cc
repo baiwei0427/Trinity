@@ -193,6 +193,7 @@ void SHAPER::timeout(int)
 	shaper_timer_.resched(MTU*8/aggregate_rate());
 }
 
+
 static class SHAPERClass : public TclClass {
 public:
 	SHAPERClass() : TclClass ("SHAPER") {}

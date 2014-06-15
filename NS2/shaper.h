@@ -41,8 +41,7 @@ public:
 	
 protected:
 	void recv(Packet *, Handler *); //receive an input packet
-	double getupdatedtokens(); //update tokens for multi-tenants
-	int command(int argc, const char*const* argv); //command function; reset values periodically
+	//int command(int argc, const char*const* argv); //command function; reset values periodically
 	
 	PacketQueue *q_array[max_queue_num]; //PacketQueue array for multi-tenants 
 	double tokens_array[max_queue_num]; //accumulated tokens array for multi-tenants
