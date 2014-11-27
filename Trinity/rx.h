@@ -20,6 +20,7 @@ struct pair_rx_context
 	struct rx_stats stats;
 	//Bandwidth guarantee rate (Mbps)
 	unsigned int rate;
+	ktime_t start_update_time;
 	ktime_t last_update_time;
 	//Structure of link list
 	struct list_head list;
@@ -51,10 +52,17 @@ struct rx_context
 static void print_pair_rx_context(struct pair_rx_context* ptr)
 {
 	char local_ip[16]={0};           
-	char remote_ip[16]={0};      
+	char remote_ip[16]={0};
+	unsigned int throughput=0;	//unit: Mbps
+	unsigned long interval=(unsigned long)ktime_us_delta(ptr->last_update_time,ptr->start_update_time);
+	
+	if(interval>0)
+	{
+		throughput=ptr->stats.rx_bytes*8/interval;
+	}
 	snprintf(local_ip, 16, "%pI4", &(ptr->local_ip));
 	snprintf(remote_ip, 16, "%pI4", &(ptr->remote_ip));
-	printk(KERN_INFO "%s->%s, %lu/%lu, pair bandwidth guarantee is %u Mbps\n",local_ip,remote_ip,ptr->stats.rx_ecn_bytes,ptr->stats.rx_bytes,ptr->rate);
+	printk(KERN_INFO "%s to %s, %lu/%lu, bandwidth guarantee is %u Mbps, actual incoming throughput is %u Mbps\n",remote_ip,local_ip,ptr->stats.rx_ecn_bytes,ptr->stats.rx_bytes,ptr->rate,throughput);
 }
 
 static void print_endpoint_rx_context(struct endpoint_rx_context* ptr)
@@ -99,13 +107,15 @@ static void Init_endpoint_rx_context(struct endpoint_rx_context* ptr, unsigned i
 //Initialize pair RX context
 static void Init_pair_rx_context(struct pair_rx_context* ptr, unsigned int local_ip, unsigned int remote_ip, unsigned int bw)
 {
+	ktime_t now=ktime_get();
 	ptr->local_ip=local_ip;
 	ptr->remote_ip=remote_ip;
 	ptr->rate=bw;
 	ptr->stats.rx_bytes=0;
 	ptr->stats.rx_ecn_bytes=0;
 	//The last update time is set to current time
-	ptr->last_update_time=ktime_get();
+	ptr->last_update_time=now;
+	ptr->start_update_time=now;
 	INIT_LIST_HEAD(&(ptr->list));
 }
 
@@ -140,6 +150,28 @@ static void Insert_endpoint(struct endpoint_rx_context* endpoint_ptr, struct rx_
 	ptr->endpoint_num++;	
 }
 
+static struct pair_rx_context* Search_pair(struct rx_context* ptr, unsigned int local_ip, unsigned int remote_ip)
+{
+	struct pair_rx_context* pair_ptr=NULL;
+	struct endpoint_rx_context* endpoint_ptr=NULL; 
+	
+	list_for_each_entry(endpoint_ptr,&(ptr->endpoint_list),list)
+	{
+		if(endpoint_ptr->local_ip==local_ip)
+		{
+			list_for_each_entry(pair_ptr,&(endpoint_ptr->pair_list),list)
+			{
+				if(pair_ptr->remote_ip==remote_ip)
+				{
+					return pair_ptr;
+				}
+			}
+		}
+	}
+	//By default, we cannot find the corresponding entry
+	return NULL;
+}
+  
 //Clear all endpoint or pair RX information entries 
 static void Empty_rx_context(struct rx_context* ptr)
 {

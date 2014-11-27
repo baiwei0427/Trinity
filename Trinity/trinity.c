@@ -23,13 +23,15 @@
 #include <linux/list.h>
 
 #include "rx.h"
+#include "network.h"
+#include "params.h"
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("BAI Wei wbaiab@cse.ust.hk");
 MODULE_VERSION("1.0");
 MODULE_DESCRIPTION("Kernel module of  Trinity");
 
-char *param_dev=NULL;
+static char *param_dev=NULL;
 MODULE_PARM_DESC(param_dev, "Interface to operate Trinity");
 module_param(param_dev, charp, 0);
 
@@ -39,6 +41,8 @@ static struct nf_hook_ops nfho_outgoing;
 static struct nf_hook_ops nfho_incoming;
 //RX context pointer
 static struct rx_context* rxPtr;
+//Lock for rx information 
+static spinlock_t rxLock;
 
 //POSTROUTING for outgoing packets
 static unsigned int hook_func_out(unsigned int hooknum, struct sk_buff *skb, const struct net_device *in, const struct net_device *out, int (*okfn)(struct sk_buff *))
@@ -55,12 +59,56 @@ static unsigned int hook_func_out(unsigned int hooknum, struct sk_buff *skb, con
 //PREROUTING for incoming packets
 static unsigned int hook_func_in(unsigned int hooknum, struct sk_buff *skb, const struct net_device *in, const struct net_device *out, int (*okfn)(struct sk_buff *))
 {
+	struct pair_rx_context* pairPtr=NULL;
+	ktime_t now;
+	struct iphdr *ip_header;		//IP  header structure
+	unsigned int local_ip;
+	unsigned int remote_ip;
+	unsigned long flags;					//variable for save current states of irq
+	unsigned int bit;						//feedback information
+	
 	if(!in)
 		return NF_ACCEPT;
     
 	if(strcmp(in->name,param_dev)!=0)
 		return NF_ACCEPT;
 	
+	ip_header=(struct iphdr *)skb_network_header(skb);
+
+	//The packet is not ip packet (e.g. ARP or others)
+	if (likely(!ip_header))
+		return NF_ACCEPT;
+	
+	local_ip=ip_header->daddr;
+	remote_ip=ip_header->saddr;
+	pairPtr=Search_pair(rxPtr,local_ip,remote_ip);
+	if(likely(pairPtr!=NULL))
+	{
+		spin_lock_irqsave(&rxLock,flags);
+		now=ktime_get();
+		pairPtr->last_update_time=now;
+		//If the interval is larger than control interval
+		if(ktime_us_delta(now,pairPtr->start_update_time)>=CONTROL_INTERVAL_US)    
+		{
+			//Calculate the fraction of ECN marking in this control interval
+			bit=pairPtr->stats.rx_ecn_bytes*1000/pairPtr->stats.rx_bytes;			
+			if(pairPtr->stats.rx_bytes>0)
+			{
+				print_pair_rx_context(pairPtr);
+			}
+			pairPtr->stats.rx_bytes=0;
+			pairPtr->stats.rx_ecn_bytes=0;
+			pairPtr->start_update_time=now;
+		}
+		pairPtr->stats.rx_bytes+=skb->len;
+		//If the packet is marked with ECN (CE bits==11)
+		if((ip_header->tos<<6)==192)
+		{
+			pairPtr->stats.rx_ecn_bytes+=skb->len;
+		}
+		spin_unlock_irqrestore(&rxLock,flags);
+	}
+	//generate_feedback(bit,skb);
 	return NF_ACCEPT;	
 }
 
@@ -68,7 +116,8 @@ int init_module()
 {
 	struct endpoint_rx_context* endpointPtr=NULL;
 	struct pair_rx_context* pairPtr=NULL;  
-	int i=0;
+	unsigned int local_ip,remote_ip;
+	int i,j;
 	
 	//Get interface
     if(param_dev==NULL) 
@@ -89,6 +138,8 @@ int init_module()
 	//Initialize RX context information
 	rxPtr=kmalloc(sizeof(struct rx_context), GFP_KERNEL);
 	Init_rx_context(rxPtr);
+	//Initialize rxLock
+	spin_lock_init(&rxLock);
 	
 	//NF_LOCAL_IN Hook
 	nfho_incoming.hook = hook_func_in;							//function to call when conditions below met
@@ -104,7 +155,42 @@ int init_module()
 	nfho_outgoing.priority = NF_IP_PRI_FIRST;				//set to highest priority over all other hook functions
 	nf_register_hook(&nfho_outgoing);								//register hook	
 	
-	//Test code
+	//Testcode
+	for(i=4;i>=0;i--)
+	{
+		//local_ip: 192.168.101.1 and 192.168.101.101-192.168.101.104 (5 IP addresses in total)
+		endpointPtr=kmalloc(sizeof(struct endpoint_rx_context), GFP_KERNEL);
+		if(i==0)
+		{
+			local_ip=256*256*256+101*256*256+168*256+192;
+		}
+		else
+		{
+			local_ip=(100+i)*256*256*256+101*256*256+168*256+192;
+		}
+		Init_endpoint_rx_context(endpointPtr,local_ip,500);	
+		Insert_endpoint(endpointPtr,rxPtr);
+		
+		for(j=4;j>=0;j--)
+		{
+			//remote_ip: 192.168.101.2,192.168.101.3 and 192.168.101.106-192.168.101.108 (5 IP addresses in total)
+			pairPtr=kmalloc(sizeof(struct pair_rx_context), GFP_KERNEL);	
+			if(j==0)
+			{
+				remote_ip=2*256*256*256+101*256*256+168*256+192;
+			}
+			else if(j==1)
+			{
+				remote_ip=3*256*256*256+101*256*256+168*256+192;
+			}
+			else
+			{
+				remote_ip=(104+j)*256*256*256+101*256*256+168*256+192;
+			}
+			Init_pair_rx_context(pairPtr,local_ip,remote_ip,100);
+			Insert_pair(pairPtr,rxPtr);	
+		}
+	}
 	
 	printk(KERN_INFO "Start Trinity kernel module\n");
 	return 0;
