@@ -65,7 +65,8 @@ static unsigned int hook_func_in(unsigned int hooknum, struct sk_buff *skb, cons
 	unsigned int local_ip;
 	unsigned int remote_ip;
 	unsigned long flags;					//variable for save current states of irq
-	unsigned int bit;						//feedback information
+	unsigned int bit=0;					//feedback information
+	unsigned short int feedback=0;
 	
 	if(!in)
 		return NF_ACCEPT;
@@ -90,8 +91,10 @@ static unsigned int hook_func_in(unsigned int hooknum, struct sk_buff *skb, cons
 		//If the interval is larger than control interval
 		if(ktime_us_delta(now,pairPtr->start_update_time)>=CONTROL_INTERVAL_US)    
 		{
+			//We need to generate feedback packet now
+			feedback=1;
 			//Calculate the fraction of ECN marking in this control interval
-			bit=pairPtr->stats.rx_ecn_bytes*1000/pairPtr->stats.rx_bytes;			
+			bit=pairPtr->stats.rx_ecn_bytes*100/pairPtr->stats.rx_bytes;			
 			if(pairPtr->stats.rx_bytes>0)
 			{
 				print_pair_rx_context(pairPtr);
@@ -102,13 +105,15 @@ static unsigned int hook_func_in(unsigned int hooknum, struct sk_buff *skb, cons
 		}
 		pairPtr->stats.rx_bytes+=skb->len;
 		//If the packet is marked with ECN (CE bits==11)
-		if((ip_header->tos<<6)==192)
+		if((ip_header->tos<<6)==0xc0)
 		{
 			pairPtr->stats.rx_ecn_bytes+=skb->len;
 		}
 		spin_unlock_irqrestore(&rxLock,flags);
+		if(feedback==1)
+			generate_feedback(bit,skb);
 	}
-	//generate_feedback(bit,skb);
+		
 	return NF_ACCEPT;	
 }
 
