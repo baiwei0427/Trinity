@@ -94,6 +94,7 @@ static unsigned int hook_func_in(unsigned int hooknum, struct sk_buff *skb, cons
 			//We need to generate feedback packet now
 			feedback=1;
 			//Calculate the fraction of ECN marking in this control interval
+			//If pairPtr->stats.rx_bytes==0, bit=0 by default
 			if(pairPtr->stats.rx_bytes>0)
 			{
 				bit=pairPtr->stats.rx_ecn_bytes*100/pairPtr->stats.rx_bytes;			
@@ -110,6 +111,7 @@ static unsigned int hook_func_in(unsigned int hooknum, struct sk_buff *skb, cons
 			pairPtr->stats.rx_ecn_bytes+=skb->len;
 		}
 		spin_unlock_irqrestore(&rxLock,flags);
+		//Generate feedback packet now 
 		if(feedback==1)
 			generate_feedback(bit,skb);
 	}

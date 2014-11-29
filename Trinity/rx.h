@@ -24,6 +24,8 @@ struct pair_rx_context
 	ktime_t last_update_time;
 	//Structure of link list
 	struct list_head list;
+	//spinlock for this structure. Use this lock when we want to modify any field in this structure
+	spinlock_t pair_lock;
 };
 
 //Define the structure of per endpoint (VM) RX context
@@ -38,6 +40,8 @@ struct endpoint_rx_context
 	struct list_head list;
 	//The  number of VM-to-VM pairs for this endpoint
 	unsigned int pair_num; 
+	//spinlock for this structure. Use this lock when we want to modify any field in this structure
+	spinlock_t endpoint_lock;
 };
 
 //Define the structure for (per NIC/physical server) RX context
@@ -47,6 +51,8 @@ struct rx_context
 	struct list_head endpoint_list;
 	//The number of endpoints for this physical server
 	unsigned int endpoint_num;
+	//spinlock for this structure. Use this lock when we want to modify any field in this structure
+	spinlock_t rx_lock;
 };
 
 static void print_pair_rx_context(struct pair_rx_context* ptr)
@@ -54,15 +60,20 @@ static void print_pair_rx_context(struct pair_rx_context* ptr)
 	char local_ip[16]={0};           
 	char remote_ip[16]={0};
 	unsigned int throughput=0;	//unit: Mbps
+	unsigned int fraction=0; //ECN marking fraction
 	unsigned long interval=(unsigned long)ktime_us_delta(ptr->last_update_time,ptr->start_update_time);
 	
+	if(ptr->stats.rx_bytes>0)
+	{
+		fraction=ptr->stats.rx_ecn_bytes*100/ptr->stats.rx_bytes;
+	}
 	if(interval>0)
 	{
 		throughput=ptr->stats.rx_bytes*8/interval;
 	}
 	snprintf(local_ip, 16, "%pI4", &(ptr->local_ip));
 	snprintf(remote_ip, 16, "%pI4", &(ptr->remote_ip));
-	printk(KERN_INFO "%s to %s, %lu/%lu, bandwidth guarantee is %u Mbps, actual incoming throughput is %u Mbps\n",remote_ip,local_ip,ptr->stats.rx_ecn_bytes,ptr->stats.rx_bytes,ptr->rate,throughput);
+	printk(KERN_INFO "%s to %s, ECN marking fraction %u%%, bandwidth guarantee is %u Mbps, actual incoming throughput is %u Mbps\n",remote_ip,local_ip,fraction,ptr->rate,throughput);
 }
 
 static void print_endpoint_rx_context(struct endpoint_rx_context* ptr)
@@ -91,6 +102,7 @@ static void print_rx_context(struct rx_context* ptr)
 static void Init_rx_context(struct rx_context* ptr)
 {
 	ptr->endpoint_num=0;
+	spin_lock_init(&(ptr->rx_lock));
 	INIT_LIST_HEAD(&(ptr->endpoint_list));
 }
 
@@ -100,6 +112,7 @@ static void Init_endpoint_rx_context(struct endpoint_rx_context* ptr, unsigned i
 	ptr->pair_num=0;
 	ptr->local_ip=ip;
 	ptr->guarantee_bw=bw;
+	spin_lock_init(&(ptr->endpoint_lock));
 	INIT_LIST_HEAD(&(ptr->pair_list));
 	INIT_LIST_HEAD(&(ptr->list));
 }
@@ -116,14 +129,18 @@ static void Init_pair_rx_context(struct pair_rx_context* ptr, unsigned int local
 	//The last update time is set to current time
 	ptr->last_update_time=now;
 	ptr->start_update_time=now;
+	spin_lock_init(&(ptr->pair_lock));
 	INIT_LIST_HEAD(&(ptr->list));
 }
 
 //Insert a new pair RX context to an endpoint RX context
 static void Insert_pair_endpoint(struct pair_rx_context* pair_ptr, struct endpoint_rx_context* endpoint_ptr)
 {
+	unsigned long flags;		
+	spin_lock_irqsave(&endpoint_ptr->endpoint_lock,flags);
 	list_add_tail(&(pair_ptr->list),&(endpoint_ptr->pair_list));
 	endpoint_ptr->pair_num++;
+	spin_unlock_irqrestore(&endpoint_ptr->endpoint_lock,flags);
 }
 
 //Insert a new pair RX context to a RX context
@@ -146,8 +163,11 @@ static void Insert_pair(struct pair_rx_context* pair_ptr, struct rx_context* ptr
 //Insert a new endpoint TX context to a RX context
 static void Insert_endpoint(struct endpoint_rx_context* endpoint_ptr, struct rx_context* ptr)
 {
+	unsigned long flags;		
+	spin_lock_irqsave(&ptr->rx_lock,flags);
 	list_add_tail(&(endpoint_ptr->list),&(ptr->endpoint_list));
 	ptr->endpoint_num++;	
+	spin_unlock_irqrestore(&ptr->rx_lock,flags);
 }
 
 static struct pair_rx_context* Search_pair(struct rx_context* ptr, unsigned int local_ip, unsigned int remote_ip)
