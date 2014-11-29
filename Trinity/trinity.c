@@ -94,9 +94,9 @@ static unsigned int hook_func_in(unsigned int hooknum, struct sk_buff *skb, cons
 			//We need to generate feedback packet now
 			feedback=1;
 			//Calculate the fraction of ECN marking in this control interval
-			bit=pairPtr->stats.rx_ecn_bytes*100/pairPtr->stats.rx_bytes;			
 			if(pairPtr->stats.rx_bytes>0)
 			{
+				bit=pairPtr->stats.rx_ecn_bytes*100/pairPtr->stats.rx_bytes;			
 				print_pair_rx_context(pairPtr);
 			}
 			pairPtr->stats.rx_bytes=0;
