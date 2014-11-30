@@ -25,24 +25,89 @@
 #include "rx.h"
 #include "network.h"
 #include "params.h"
+#include "control.h"
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("BAI Wei wbaiab@cse.ust.hk");
 MODULE_VERSION("1.0");
 MODULE_DESCRIPTION("Kernel module of  Trinity");
+MODULE_SUPPORTED_DEVICE(DEVICE_NAME)
 
 static char *param_dev=NULL;
 MODULE_PARM_DESC(param_dev, "Interface to operate Trinity");
 module_param(param_dev, charp, 0);
 
+//Open virtual characer device "/dev/trinity"
+static int device_open(struct inode *, struct file *);
+//Release virtual characer device "/dev/trinity"
+static int device_release(struct inode *, struct file *);
+//user space-kernel space communication (for Linux kernel 2.6.38.3)
+static int device_ioctl(struct file *, unsigned int, unsigned long) ; 
 //Hook for outgoing packets at LOCAL_OUT 
 static struct nf_hook_ops nfho_outgoing;
 //Hook for outgoing packets at LOCAL_IN
 static struct nf_hook_ops nfho_incoming;
+
 //RX context pointer
 static struct rx_context* rxPtr;
 //Lock for rx information 
 static spinlock_t rxLock;
+
+static int device_open(struct inode *inode, struct file *file) 
+{
+	//printk(KERN_INFO "Device %s is opened\n",DEVICE_NAME);
+	try_module_get(THIS_MODULE);
+	return SUCCESS;
+}
+
+static int device_release(struct inode *inode, struct file *file) 
+{
+	//printk(KERN_INFO "Device %s is closed\n",DEVICE_NAME);
+	module_put(THIS_MODULE);
+	return SUCCESS;
+}
+
+static int device_ioctl(struct file *file, unsigned int ioctl_num, unsigned long ioctl_param) 
+{
+	struct pair_rx_context_user* user_pairPtr=NULL;
+	struct endpoint_rx_context_user* user_endpointPtr=NULL;
+	struct pair_rx_context* pairPtr=NULL;
+	struct endpoint_rx_context* endpointPtr=NULL;
+	
+	switch (ioctl_num) 
+	{
+		//Insert a new pair RX context
+		case IOCTL_INSERT_RX_PAIR:
+			user_pairPtr=(struct pair_rx_context_user*)ioctl_param;
+			Init_pair_rx_context(pairPtr,user_pairPtr->local_ip,user_pairPtr->remote_ip,user_pairPtr->rate);
+			Insert_pair(pairPtr,rxPtr);
+			break;
+		//Delete a pair RX context 
+		case IOCTL_DELETE_RX_PAIR:
+			user_pairPtr=(struct pair_rx_context_user*)ioctl_param;
+			Delete_pair(user_pairPtr->local_ip,user_pairPtr->remote_ip,rxPtr);
+			break;
+		//Insert a new endpoint RX context
+		case IOCTL_INSERT_RX_ENDPOINT:
+			user_endpointPtr=(struct endpoint_rx_context_user*)ioctl_param;
+			Init_endpoint_rx_context(endpointPtr,user_endpointPtr->local_ip,user_endpointPtr->guarantee_bw);
+			Insert_endpoint(endpointPtr,rxPtr);
+			break;
+		case IOCTL_DISPLAY_RX:
+			print_rx_context(rxPtr);
+			break;
+	}
+	return SUCCESS;	
+}
+
+struct file_operations ops = {
+    .read = NULL,
+    .write = NULL,
+   // .ioctl = device_ioctl, //For 2.6.32 kernel
+    .unlocked_ioctl = device_ioctl, //For 2.6.38 kernel
+    .open = device_open,
+    .release = device_release,
+};
 
 //POSTROUTING for outgoing packets
 static unsigned int hook_func_out(unsigned int hooknum, struct sk_buff *skb, const struct net_device *in, const struct net_device *out, int (*okfn)(struct sk_buff *))
@@ -121,10 +186,11 @@ static unsigned int hook_func_in(unsigned int hooknum, struct sk_buff *skb, cons
 
 int init_module()
 {
-	struct endpoint_rx_context* endpointPtr=NULL;
-	struct pair_rx_context* pairPtr=NULL;  
-	unsigned int local_ip,remote_ip;
-	int i,j;
+	//struct endpoint_rx_context* endpointPtr=NULL;
+	//struct pair_rx_context* pairPtr=NULL;  
+	//unsigned int local_ip,remote_ip;
+	//int i,j;
+	int i,ret;
 	
 	//Get interface
     if(param_dev==NULL) 
@@ -162,6 +228,15 @@ int init_module()
 	nfho_outgoing.priority = NF_IP_PRI_FIRST;				//set to highest priority over all other hook functions
 	nf_register_hook(&nfho_outgoing);								//register hook	
 	
+	//Register device file
+	ret = register_chrdev(MAJOR_NUM, DEVICE_NAME, &ops);
+	if (ret < 0) 
+	{
+		printk(KERN_INFO "Registering char device failed with %d\n", MAJOR_NUM);
+		return ret;
+	}
+	printk(KERN_INFO "Registering char device successfully with %d\n", MAJOR_NUM);
+	/*
 	//Testcode
 	for(i=4;i>=0;i--)
 	{
@@ -197,14 +272,16 @@ int init_module()
 			Init_pair_rx_context(pairPtr,local_ip,remote_ip,100);
 			Insert_pair(pairPtr,rxPtr);	
 		}
-	}
+	}*/
 	
 	printk(KERN_INFO "Start Trinity kernel module\n");
-	return 0;
+	return SUCCESS;
 }
 
 void cleanup_module()
 {
+	//Unregister device
+	unregister_chrdev(MAJOR_NUM, DEVICE_NAME);
 	//Unregister two hooks
 	nf_unregister_hook(&nfho_outgoing);  
 	nf_unregister_hook(&nfho_incoming);	
@@ -214,83 +291,4 @@ void cleanup_module()
 	printk(KERN_INFO "Stop Trinity kernel module\n");
 	
 }
-/*int init_module()
-{
-	int i,j;
-	struct endpoint_rx_context* endpointPtr=NULL;
-	struct pair_rx_context* pairPtr=NULL;  
-	
-	printk(KERN_INFO "Start Trinity kernel module\n");
-	rxPtr=kmalloc(sizeof(struct rx_context), GFP_KERNEL);
-	Init_rx_context(rxPtr);
-	for(i=1;i<5;i++)
-	{
-		endpointPtr=kmalloc(sizeof(struct endpoint_rx_context), GFP_KERNEL);	
-		Init_endpoint_rx_context(endpointPtr,i*256*256*256+168*256+192,400);
-		Insert_endpoint(endpointPtr,rxPtr);
-		
-		for(j=1;j<5;j++)
-		{
-			pairPtr=kmalloc(sizeof(struct pair_rx_context), GFP_KERNEL);	
-			Init_pair_rx_context(pairPtr,i*256*256*256+168*256+192,j*256*256*256+i*256*256+168*256+192,100);
-			Insert_pair(pairPtr,rxPtr);
-		}
-	}
-	
-	print_rx_context(rxPtr);
-	return 0;
-}
-
-void cleanup_module()
-{
-	Empty_rx_context(rxPtr);	
-	kfree(rxPtr);
-	printk(KERN_INFO "Remove Trinity kernel module\n");
-}*/
-
-/*static struct list_head pair_list;
-	
-//Called when module loaded using 'insmod'¡¡
-int init_module()
-{
-	int i=0;
-	struct pair_rx_context* ptr=NULL; 
-	
-	INIT_LIST_HEAD(&pair_list);
-	//Allocate four pair_rx_context from kernel
-	for(i=1;i<5;i++)
-	{
-		ptr=kmalloc(sizeof(struct pair_rx_context), GFP_KERNEL);
-		ptr->local_ip=i*256*256*256+168*256+192;
-		ptr->remote_ip=i*256*256*256+256*256+168*256+192;
-		ptr->rate=100;
-		ptr->stats.rx_bytes=i;
-		ptr->stats.rx_ecn_bytes=i;
-		INIT_LIST_HEAD(&(ptr->list));
-		//Add this structure to the tail of the linked list
-		list_add_tail(&(ptr->list),&pair_list);
-	}
-	printk(KERN_INFO "Display the list:\n");
-	list_for_each_entry(ptr,&pair_list,list)
-	{
-		print_pair_rx_context(ptr);
-	}
-	printk(KERN_INFO "Display done\n");
-	return 0;
-}
-
-//Called when module unloaded using 'rmmod'
-void cleanup_module()
-{
-	struct pair_rx_context* ptr=NULL; 
-	struct pair_rx_context* next=NULL; 
-	printk(KERN_INFO "Remove start\n");	
-	list_for_each_entry_safe(ptr, next, &pair_list, list)
-    {
-		print_pair_rx_context(ptr);
-        list_del(&ptr->list);
-        kfree(ptr);
-    }	
-	printk(KERN_INFO "Remove done\n");	
-}*/
 

@@ -195,11 +195,13 @@ static struct pair_rx_context* Search_pair(struct rx_context* ptr, unsigned int 
 //Clear all endpoint or pair RX information entries 
 static void Empty_rx_context(struct rx_context* ptr)
 {
+	unsigned long flags;		
 	struct endpoint_rx_context* endpoint_ptr=NULL; 
 	struct endpoint_rx_context* endpoint_next=NULL; 
 	struct pair_rx_context* pair_ptr=NULL; 
 	struct pair_rx_context* pair_next=NULL; 
 	
+	spin_lock_irqsave(&ptr->rx_lock,flags);
 	list_for_each_entry_safe(endpoint_ptr, endpoint_next, &(ptr->endpoint_list), list)
     {
 		print_endpoint_rx_context(endpoint_ptr);
@@ -212,6 +214,59 @@ static void Empty_rx_context(struct rx_context* ptr)
 		list_del(&(endpoint_ptr->list));
 		kfree(endpoint_ptr);
     }	
+	spin_unlock_irqrestore(&ptr->rx_lock,flags);
+}
+
+//Delete a pair RX context (local_ip, remote_ip) from an endpoint RX context
+//Return 1 if delete succeeds
+static unsigned int Delete_pair_endpoint(unsigned int local_ip, unsigned int remote_ip, struct endpoint_rx_context* endpoint_ptr)
+{
+	unsigned long flags;		
+	struct pair_rx_context* pair_ptr=NULL; 
+	struct pair_rx_context* pair_next=NULL; 
+	
+	//No RX pair context in this endpoint
+	if(endpoint_ptr->pair_num==0)
+		return 0;
+		
+	list_for_each_entry_safe(pair_ptr, pair_next, &(endpoint_ptr->pair_list), list)
+	{
+		//print_pair_rx_context(pair_ptr);	
+		//If we find corresponding pair RX entry
+		if(pair_ptr->local_ip==local_ip&&pair_ptr->remote_ip==remote_ip)
+		{
+			spin_lock_irqsave(&endpoint_ptr->endpoint_lock,flags);
+			list_del(&(pair_ptr->list));
+			kfree(pair_ptr);
+			endpoint_ptr->pair_num--;
+			spin_unlock_irqrestore(&endpoint_ptr->endpoint_lock,flags);
+			return 1;
+		}
+	}
+	printk(KERN_INFO "Can not delete corresponding pair RX information entry\n");
+	return 0;
+}
+
+//Delete a pair RX context (local_ip, remote_ip) from a RX context
+//Return 1 if delete succeeds
+static unsigned int Delete_pair(unsigned int local_ip, unsigned int remote_ip, struct rx_context* ptr)
+{
+	struct endpoint_rx_context* endpoint_ptr=NULL; 
+	
+	//No RX endpoint context 
+	if(ptr->endpoint_num==0)
+		return 0;
+	
+	list_for_each_entry(endpoint_ptr,&(ptr->endpoint_list),list)
+	{	
+		//If the local_ip is matched
+		if(endpoint_ptr->local_ip==local_ip)
+		{
+			//Delete the pair RX context from the corresponding endpoint RX context
+			return Delete_pair_endpoint(local_ip, remote_ip, endpoint_ptr);
+		}
+	}
+	return 0;
 }
 
 #endif
