@@ -79,8 +79,16 @@ static int device_ioctl(struct file *file, unsigned int ioctl_num, unsigned long
 		//Insert a new pair RX context
 		case IOCTL_INSERT_RX_PAIR:
 			user_pairPtr=(struct pair_rx_context_user*)ioctl_param;
-			Init_pair_rx_context(pairPtr,user_pairPtr->local_ip,user_pairPtr->remote_ip,user_pairPtr->rate);
-			Insert_pair(pairPtr,rxPtr);
+			pairPtr=kmalloc(sizeof(struct pair_rx_context), GFP_ATOMIC);	
+			if(pairPtr!=NULL)
+			{
+				Init_pair_rx_context(pairPtr,user_pairPtr->local_ip,user_pairPtr->remote_ip,user_pairPtr->rate);
+				Insert_pair(pairPtr,rxPtr);
+			}
+			else
+			{
+				printk(KERN_INFO "Kmalloc error when inserting a new pair RX context\n");
+			}
 			break;
 		//Delete a pair RX context 
 		case IOCTL_DELETE_RX_PAIR:
@@ -90,8 +98,16 @@ static int device_ioctl(struct file *file, unsigned int ioctl_num, unsigned long
 		//Insert a new endpoint RX context
 		case IOCTL_INSERT_RX_ENDPOINT:
 			user_endpointPtr=(struct endpoint_rx_context_user*)ioctl_param;
-			Init_endpoint_rx_context(endpointPtr,user_endpointPtr->local_ip,user_endpointPtr->guarantee_bw);
-			Insert_endpoint(endpointPtr,rxPtr);
+			endpointPtr=kmalloc(sizeof(struct endpoint_rx_context), GFP_ATOMIC);	
+			if(endpointPtr!=NULL)
+			{
+				Init_endpoint_rx_context(endpointPtr,user_endpointPtr->local_ip,user_endpointPtr->guarantee_bw);
+				Insert_endpoint(endpointPtr,rxPtr);
+			}
+			else
+			{
+				printk(KERN_INFO "Kmalloc error when inserting a new endpoint RX context\n");	
+			}
 			break;
 		case IOCTL_DISPLAY_RX:
 			print_rx_context(rxPtr);
@@ -232,10 +248,10 @@ int init_module()
 	ret = register_chrdev(MAJOR_NUM, DEVICE_NAME, &ops);
 	if (ret < 0) 
 	{
-		printk(KERN_INFO "Registering char device failed with %d\n", MAJOR_NUM);
+		printk(KERN_INFO "Register char device failed with %d\n", MAJOR_NUM);
 		return ret;
 	}
-	printk(KERN_INFO "Registering char device successfully with %d\n", MAJOR_NUM);
+	printk(KERN_INFO "Register char device successfully with %d\n", MAJOR_NUM);
 	/*
 	//Testcode
 	for(i=4;i>=0;i--)

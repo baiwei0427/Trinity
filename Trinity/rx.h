@@ -87,15 +87,18 @@ static void print_rx_context(struct rx_context* ptr)
 {
 	struct endpoint_rx_context* endpoint_ptr=NULL; 
 	struct pair_rx_context* pair_ptr=NULL;
+	unsigned int pair_num=0;
 	
 	list_for_each_entry(endpoint_ptr,&(ptr->endpoint_list),list)
 	{
 		print_endpoint_rx_context(endpoint_ptr);
 		list_for_each_entry(pair_ptr,&(endpoint_ptr->pair_list),list)
 		{
+			pair_num++;
 			print_pair_rx_context(pair_ptr);
 		}
 	}	
+	printk(KERN_INFO "There are %u endpoint RX entries and %u pair RX entries in total\n",ptr->endpoint_num,pair_num);
 }
 
 //Initialize RX context
