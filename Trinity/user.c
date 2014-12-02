@@ -15,7 +15,7 @@ static void usage(char* program)
 {
 	printf("Usage of this program\n");
 	printf("%s [display] [rx]\n",program);    
-	printf("%s [insert] [rx] [local ip] [bandwidth]\n",program);
+	printf("%s [insert|delete] [rx] [local ip] [bandwidth]\n",program);
 	printf("%s [insert|delete] [rx] [local ip] [remote ip] [bandwidth]\n",program);
 }
 
@@ -44,7 +44,7 @@ int main(int argc, char *argv[])
 			goto error;
 		}
 	}
-	//[program] [insert] [rx] [local ip] [guarantee] [bandwidth]
+	//[program] [insert|delete] [rx] [local ip] [bandwidth]
 	else if(argc==5)
 	{
 		struct endpoint_rx_context_user endpoint;
@@ -54,12 +54,19 @@ int main(int argc, char *argv[])
 			endpoint.guarantee_bw=(unsigned int)strtol(argv[4], NULL, 10);
 			ret=ioctl(file_desc,IOCTL_INSERT_RX_ENDPOINT,&endpoint);
 		}
+		else if((strlen(argv[1])==6)&&(strncmp(argv[1],"delete",6)==0)&&(strlen(argv[2])==2)&&(strncmp(argv[2],"rx",2)==0))
+		{
+			inet_pton(AF_INET,argv[3],&(endpoint.local_ip));
+			//guarantee bandwidth has not use when we delete a RX endpoint entry 
+			endpoint.guarantee_bw=0;
+			ret=ioctl(file_desc,IOCTL_DELETE_RX_ENDPOINT,&endpoint);
+		}
 		else
 		{
 			goto error;
 		}
 	}
-	//[program] [insert/delete] [rx] [local ip] [remote ip] [bandwidth]
+	//[program] [insert|delete] [rx] [local ip] [remote ip] [bandwidth]
 	else if(argc==6)
 	{
 		struct pair_rx_context_user pair;

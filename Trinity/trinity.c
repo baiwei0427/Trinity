@@ -109,6 +109,12 @@ static int device_ioctl(struct file *file, unsigned int ioctl_num, unsigned long
 				printk(KERN_INFO "Kmalloc error when inserting a new endpoint RX context\n");	
 			}
 			break;
+		//Delete an enfpoint RX context
+		case IOCTL_DELETE_RX_ENDPOINT:
+			user_endpointPtr=(struct endpoint_rx_context_user*)ioctl_param;
+			Delete_endpoint(user_endpointPtr->local_ip,rxPtr);
+			break;
+		//Display
 		case IOCTL_DISPLAY_RX:
 			print_rx_context(rxPtr);
 			break;

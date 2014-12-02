@@ -272,4 +272,42 @@ static unsigned int Delete_pair(unsigned int local_ip, unsigned int remote_ip, s
 	return 0;
 }
 
+//Delete a endpoint RX context (local_ip) from a RX context
+//Return 1 if delete succeeds
+//Note that all related pair RX entries will also be deleted!
+static unsigned int Delete_endpoint(unsigned int local_ip, struct rx_context* ptr)
+{
+	unsigned long flags;		
+	struct endpoint_rx_context* endpoint_ptr=NULL; 
+	struct endpoint_rx_context* endpoint_next=NULL; 
+	struct pair_rx_context* pair_ptr=NULL; 
+	struct pair_rx_context* pair_next=NULL; 
+	
+	//No RX endpoint context 
+	if(ptr->endpoint_num==0)
+		return 0;
+	
+	list_for_each_entry_safe(endpoint_ptr, endpoint_next, &(ptr->endpoint_list), list)
+    {
+		//If we find corresponding endpoint RX entry
+		if(endpoint_ptr->local_ip==local_ip)
+		{
+			spin_lock_irqsave(&ptr->rx_lock,flags);
+			//Delete all pair RX entries related to this endpoint RX entry
+			list_for_each_entry_safe(pair_ptr, pair_next, &(endpoint_ptr->pair_list), list)
+			{
+				print_pair_rx_context(pair_ptr);	
+				list_del(&(pair_ptr->list));
+				kfree(pair_ptr);
+			}
+			list_del(&(endpoint_ptr->list));
+			kfree(endpoint_ptr);
+			ptr->endpoint_num--;
+			spin_unlock_irqrestore(&ptr->rx_lock,flags);
+			return 1;
+		}
+	}		
+	return 0;
+}
+
 #endif

@@ -5,7 +5,6 @@
 #include "params.h"
 
 //Create a feebdack packet. Note that bit is the congestion information and pkt is an incoming packet  
-//I modity send_reset function in Linux kernel.
 //Return 1 if successful. Else, return 0. 
 //My implementation is based on send_reset function of Linux kernel
 static unsigned int generate_feedback(unsigned int bit, struct sk_buff *pkt)
