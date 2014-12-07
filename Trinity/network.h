@@ -1,7 +1,6 @@
 #ifndef NETWORK_H
 #define NETWORK_H
 
-#include <linux/skbuff.h>
 #include "params.h"
 
 //Create a feebdack packet. Note that bit is the congestion information and pkt is an incoming packet  
@@ -64,5 +63,23 @@ static unsigned int generate_feedback(unsigned int bit, struct sk_buff *pkt)
 	kfree_skb(skb);
 	return 0;
 }
-	
+
+static void enable_ecn(struct sk_buff *skb)
+{
+	struct iphdr *iph = ip_hdr(skb);
+	if(iph!=NULL)
+	{
+		ipv4_change_dsfield(iph, 0xff, iph->tos | INET_ECN_ECT_0);
+	}
+}
+
+static inline clear_ecn(struct sk_buff *skb)
+{
+	struct iphdr *iph = ip_hdr(skb);
+	if(iph!=NULL)
+	{
+		ipv4_change_dsfield(iph, 0xff, iph->tos & ~0x3);
+	}
+}
+
 #endif

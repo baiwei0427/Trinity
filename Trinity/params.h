@@ -12,4 +12,9 @@ const u8 FEEDBACK_PACKET_TTL=64;
 const u8 FEEDBACK_PACKET_TOS=0x6;
 int FEEDBACK_PACKET_IPPROTO=143; // should be some unused protocol
 
+//The following parameters are used for rate limters
+const unsigned int MAX_QUEUE_LEN=512;
+const unsigned int TIMER_INTERVAL_US=100;
+const unsigned int BUCKET_SIZE_BYTES=32*1024;
+
 #endif

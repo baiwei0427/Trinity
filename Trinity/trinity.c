@@ -43,9 +43,9 @@ static int device_open(struct inode *, struct file *);
 static int device_release(struct inode *, struct file *);
 //user space-kernel space communication (for Linux kernel 2.6.38.3)
 static int device_ioctl(struct file *, unsigned int, unsigned long) ; 
-//Hook for outgoing packets at LOCAL_OUT 
+//Hook for outgoing packets at POSTROUTING
 static struct nf_hook_ops nfho_outgoing;
-//Hook for outgoing packets at LOCAL_IN
+//Hook for outgoing packets at PREROUTING
 static struct nf_hook_ops nfho_incoming;
 
 //RX context pointer
@@ -67,6 +67,7 @@ static int device_release(struct inode *inode, struct file *file)
 	return SUCCESS;
 }
 
+//This context of this function should be kernel thread rather than interrupt. Is this correct?
 static int device_ioctl(struct file *file, unsigned int ioctl_num, unsigned long ioctl_param) 
 {
 	struct pair_rx_context_user* user_pairPtr=NULL;
@@ -79,7 +80,7 @@ static int device_ioctl(struct file *file, unsigned int ioctl_num, unsigned long
 		//Insert a new pair RX context
 		case IOCTL_INSERT_RX_PAIR:
 			user_pairPtr=(struct pair_rx_context_user*)ioctl_param;
-			pairPtr=kmalloc(sizeof(struct pair_rx_context), GFP_ATOMIC);	
+			pairPtr=kmalloc(sizeof(struct pair_rx_context), GFP_KERNEL);	
 			if(pairPtr!=NULL)
 			{
 				Init_pair_rx_context(pairPtr,user_pairPtr->local_ip,user_pairPtr->remote_ip,user_pairPtr->rate);
@@ -98,7 +99,7 @@ static int device_ioctl(struct file *file, unsigned int ioctl_num, unsigned long
 		//Insert a new endpoint RX context
 		case IOCTL_INSERT_RX_ENDPOINT:
 			user_endpointPtr=(struct endpoint_rx_context_user*)ioctl_param;
-			endpointPtr=kmalloc(sizeof(struct endpoint_rx_context), GFP_ATOMIC);	
+			endpointPtr=kmalloc(sizeof(struct endpoint_rx_context), GFP_KERNEL);	
 			if(endpointPtr!=NULL)
 			{
 				Init_endpoint_rx_context(endpointPtr,user_endpointPtr->local_ip,user_endpointPtr->guarantee_bw);
@@ -172,7 +173,8 @@ static unsigned int hook_func_in(unsigned int hooknum, struct sk_buff *skb, cons
 	pairPtr=Search_pair(rxPtr,local_ip,remote_ip);
 	if(likely(pairPtr!=NULL))
 	{
-		spin_lock_irqsave(&rxLock,flags);
+		spin_lock_bh(&(pairPtr->pair_lock));
+		//spin_lock_irqsave(&rxLock,flags);
 		now=ktime_get();
 		pairPtr->last_update_time=now;
 		//If the interval is larger than control interval
@@ -197,7 +199,8 @@ static unsigned int hook_func_in(unsigned int hooknum, struct sk_buff *skb, cons
 		{
 			pairPtr->stats.rx_ecn_bytes+=skb->len;
 		}
-		spin_unlock_irqrestore(&rxLock,flags);
+		spin_unlock_bh(&(pairPtr->pair_lock));
+		//spin_unlock_irqrestore(&rxLock,flags);
 		//Generate feedback packet now 
 		if(feedback==1)
 			generate_feedback(bit,skb);
@@ -236,19 +239,19 @@ int init_module()
 	//Initialize rxLock
 	spin_lock_init(&rxLock);
 	
-	//NF_LOCAL_IN Hook
-	nfho_incoming.hook = hook_func_in;							//function to call when conditions below met
-	nfho_incoming.hooknum =  NF_INET_LOCAL_IN;		//called in NF_IP_LOCAL_IN
-	nfho_incoming.pf = PF_INET;											//IPv4 packets
-	nfho_incoming.priority = NF_IP_PRI_FIRST;				//set to highest priority over all other hook functions
-	nf_register_hook(&nfho_incoming);								//register hook*/
+	//NF_PRE_ROUTING Hook
+	nfho_incoming.hook = hook_func_in;							
+	nfho_incoming.hooknum =  NF_INET_PRE_ROUTING;		
+	nfho_incoming.pf = PF_INET;											
+	nfho_incoming.priority = NF_IP_PRI_FIRST;			
+	nf_register_hook(&nfho_incoming);							
 	
-	//NF_LOCAL_OUT Hook
-	nfho_outgoing.hook = hook_func_out;						//function to call when conditions below met
-	nfho_outgoing.hooknum =  NF_INET_LOCAL_OUT;	//called in NF_IP_LOCAL_OUT
-	nfho_outgoing.pf = PF_INET;											//IPv4 packets
-	nfho_outgoing.priority = NF_IP_PRI_FIRST;				//set to highest priority over all other hook functions
-	nf_register_hook(&nfho_outgoing);								//register hook	
+	//NF_POST_ROUTING Hook
+	nfho_outgoing.hook = hook_func_out;						
+	nfho_outgoing.hooknum =  NF_INET_POST_ROUTING;	
+	nfho_outgoing.pf = PF_INET;											
+	nfho_outgoing.priority = NF_IP_PRI_FIRST;			
+	nf_register_hook(&nfho_outgoing);								
 	
 	//Register device file
 	ret = register_chrdev(MAJOR_NUM, DEVICE_NAME, &ops);
@@ -258,44 +261,6 @@ int init_module()
 		return ret;
 	}
 	printk(KERN_INFO "Register char device successfully with %d\n", MAJOR_NUM);
-	/*
-	//Testcode
-	for(i=4;i>=0;i--)
-	{
-		//local_ip: 192.168.101.1 and 192.168.101.101-192.168.101.104 (5 IP addresses in total)
-		endpointPtr=kmalloc(sizeof(struct endpoint_rx_context), GFP_KERNEL);
-		if(i==0)
-		{
-			local_ip=256*256*256+101*256*256+168*256+192;
-		}
-		else
-		{
-			local_ip=(100+i)*256*256*256+101*256*256+168*256+192;
-		}
-		Init_endpoint_rx_context(endpointPtr,local_ip,500);	
-		Insert_endpoint(endpointPtr,rxPtr);
-		
-		for(j=4;j>=0;j--)
-		{
-			//remote_ip: 192.168.101.2,192.168.101.3 and 192.168.101.106-192.168.101.108 (5 IP addresses in total)
-			pairPtr=kmalloc(sizeof(struct pair_rx_context), GFP_KERNEL);	
-			if(j==0)
-			{
-				remote_ip=2*256*256*256+101*256*256+168*256+192;
-			}
-			else if(j==1)
-			{
-				remote_ip=3*256*256*256+101*256*256+168*256+192;
-			}
-			else
-			{
-				remote_ip=(104+j)*256*256*256+101*256*256+168*256+192;
-			}
-			Init_pair_rx_context(pairPtr,local_ip,remote_ip,100);
-			Insert_pair(pairPtr,rxPtr);	
-		}
-	}*/
-	
 	printk(KERN_INFO "Start Trinity kernel module\n");
 	return SUCCESS;
 }
