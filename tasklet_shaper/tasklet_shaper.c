@@ -22,47 +22,34 @@
 #include <linux/errno.h>
 #include <linux/timer.h>
 
-#include "queue.h"
+#include "tx.h"
 
 MODULE_LICENSE("GPL");
 
-//microsecond to nanosecond
-#define US_TO_NS(x)	(x * 1E3L)
-//millisecond to nanosecond
-#define MS_TO_NS(x)	(x * 1E6L)
-
-unsigned int rate=100; //Mbps
-
-const unsigned int bucket=64000;	//bytes
-unsigned int tokens=64000;	//bytes
 //static struct PacketQueue *queuePtr;
 static char *param_dev="eth1\0";
 static struct nf_hook_ops nfho_outgoing;
-static struct TBF *tbfPtr;
-static struct tasklet_struct xmit_timeout;
-static struct hrtimer hr_timer;
-//static ktime_t last_update_time;
-static unsigned long delay_in_us = 100L;
+struct tx_context tx;
 
 static void xmit_tasklet(unsigned long data)
 {
-	struct TBF *tbf=(struct TBF*)data;
+	struct tx_context *txPtr=(struct tx_context*)data;
 	unsigned int skb_len;
 	ktime_t now=ktime_get();
 	
-	tbf->token=tbf->token+ktime_us_delta(now,tbf->last_update_time)*(tbf->rate)/8;
-	tbf->last_update_time=now;
+	txPtr->tbfPtr->tokens+=ktime_us_delta(now,txPtr->tbfPtr->last_update_time)*(txPtr->tbfPtr->rate)/8;
+	txPtr->tbfPtr->last_update_time=now;
 	while(1)
 	{
-		if(tbf->queuePtr->len>0)
+		if(txPtr->tbfPtr->len>0)
 		{
-			skb_len=tbf->queuePtr->packets[tbf->queuePtr->head].skb->len;
-			if(skb_len<=tbf->token)
+			skb_len=txPtr->tbfPtr->packets[txPtr->tbfPtr->head].skb->len;
+			if(skb_len<=txPtr->tbfPtr->tokens)
 			{
-				tbf->token=tbf->token-skb_len;
-				spin_lock_bh(&(tbf->queuePtr->queue_lock));
-				Dequeue_PacketQueue(tbf->queuePtr);
-				spin_unlock_bh(&(tbf->queuePtr->queue_lock));
+				txPtr->tbfPtr->tokens-=skb_len;
+				spin_lock_bh(&(txPtr->tbfPtr->spinlock));
+				Dequeue_tbf(txPtr->tbfPtr);
+				spin_unlock_bh(&(txPtr->tbfPtr->spinlock));
 			}
 			else
 			{
@@ -75,16 +62,19 @@ static void xmit_tasklet(unsigned long data)
 		}
 	}
 	
-	if(tbf->token>=tbf->bucket&&tbf->queuePtr->len==0)
-		tbf->token=tbf->bucket;	
+	if(txPtr->tbfPtr->tokens>=txPtr->tbfPtr->bucket&&txPtr->tbfPtr->len==0)
+		txPtr->tbfPtr->tokens=txPtr->tbfPtr->bucket;	
 		
 	//Start time again
-	hrtimer_start(&hr_timer, ktime_set( 0, US_TO_NS(delay_in_us)), HRTIMER_MODE_REL);
+	hrtimer_start(&(txPtr->timer), ktime_set( 0, txPtr->delay_in_us*1000), HRTIMER_MODE_REL);
 }
 
+/* HARDIRQ timeout */
 static enum hrtimer_restart my_hrtimer_callback( struct hrtimer *timer )
 {
-	tasklet_schedule(&xmit_timeout);
+	/* schedue xmit tasklet to go into softirq context */
+	struct tx_context *txPtr = container_of(timer, struct tx_context, timer);
+	tasklet_schedule(&(txPtr->xmit_timeout));
 	return HRTIMER_NORESTART;
 }
 
@@ -102,11 +92,11 @@ static unsigned int hook_func_out(unsigned int hooknum, struct sk_buff *skb, con
 	
 	if(ip_hdr(skb)!=NULL)
 	{
-		spin_lock_bh(&(tbfPtr->queuePtr->queue_lock));
+		spin_lock_bh(&(tx.tbfPtr->spinlock));
 		//spin_lock_irqsave(&(queuePtr->queue_lock),flags);
-		result=Enqueue_PacketQueue(tbfPtr->queuePtr,skb,okfn);
+		result=Enqueue_tbf(tx.tbfPtr,skb,okfn);
 		//spin_unlock_irqrestore(&(queuePtr->queue_lock),flags);
-		spin_unlock_bh(&(tbfPtr->queuePtr->queue_lock));
+		spin_unlock_bh(&(tx.tbfPtr->spinlock));
 		if(result==0)
 		{
 			return NF_DROP;
@@ -121,35 +111,21 @@ static unsigned int hook_func_out(unsigned int hooknum, struct sk_buff *skb, con
 
 int init_module()
 {	
-	//Initialize token bucket rate limter
-	tbfPtr=kmalloc(sizeof(struct TBF),GFP_KERNEL);
-	Init_TBF(tbfPtr,100,64000,GFP_KERNEL);
-	//queuePtr=kmalloc(sizeof(struct PacketQueue),GFP_KERNEL);
-	//Init_PacketQueue(queuePtr,GFP_KERNEL);
-	
-	tasklet_init(&xmit_timeout, xmit_tasklet, (unsigned long)tbfPtr);
-	
-	hrtimer_init(&hr_timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
-	hr_timer.function = &my_hrtimer_callback;
-	hrtimer_start( &hr_timer, ktime_set( 0, US_TO_NS(delay_in_us) ), HRTIMER_MODE_REL);
-	//last_update_time=ktime_get();
+	//Initialize TX information
+	Init_tx(&tx,100,32000,512,&xmit_tasklet,&my_hrtimer_callback,100,GFP_KERNEL);
 	
 	//NF_POST_ROUTING Hook
 	nfho_outgoing.hook = hook_func_out;						
 	nfho_outgoing.hooknum =  NF_INET_POST_ROUTING;	
 	nfho_outgoing.pf = PF_INET;											
 	nfho_outgoing.priority = NF_IP_PRI_FIRST;			
-	nf_register_hook(&nfho_outgoing);			
+	nf_register_hook(&nfho_outgoing);		
+	
 	return 0;
 }
 
 void cleanup_module()
 {
 	nf_unregister_hook(&nfho_outgoing);  
-	hrtimer_cancel(&hr_timer);
-	tasklet_kill(&xmit_timeout);
-	//Free_PacketQueue(queuePtr);
-	//vfree(queuePtr);
-	Free_TBF(tbfPtr);
-	kfree(tbfPtr);
+	Free_tx(&tx);
 }
