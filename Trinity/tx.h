@@ -1,7 +1,7 @@
 #ifndef	TX_H
 #define	TX_H
 
-#include "rl.h"
+#include "tbf.h"
 
 //Define the structure of per VM-to-VM pair TX context
 struct pair_tx_context 
@@ -12,7 +12,7 @@ struct pair_tx_context
 	unsigned int guarantee_bw;
 	//Structure of link list
 	struct list_head list;
-	//Pointer of token bucket rate limiter
+	//Token bucket rate limiter
 	struct tbf_rl rateLimiter;
 	//We use tasklet(softirq) rather than hardirq context of hrtimer to implement rate limiting
 	struct tasklet_struct xmit_timeout;
@@ -52,23 +52,23 @@ struct tx_context
 };
 
 static void print_pair_tx_context(struct pair_tx_context* ptr)
-{
+{		
 	char local_ip[16]={0};           
 	char remote_ip[16]={0};
 	snprintf(local_ip, 16, "%pI4", &(ptr->local_ip));
 	snprintf(remote_ip, 16, "%pI4", &(ptr->remote_ip));
-	printk(KERN_INFO "%s to %s, bandwidth guarantee is %u Mbps, actual rate is %u Mbps\n",remote_ip,local_ip,ptr->guarantee_bw,ptr->rate);
+	printk(KERN_INFO "%s to %s, bandwidth guarantee is %u Mbps, actual rate is %u Mbps\n",remote_ip,local_ip,ptr->guarantee_bw,ptr->rateLimiter.rate);
 }
 
 static void print_endpoint_tx_context(struct endpoint_tx_context* ptr)
-{
+{		
 	char local_ip[16]={0};      
 	snprintf(local_ip, 16, "%pI4", &(ptr->local_ip));
 	printk(KERN_INFO "%s, endpoint bandwidth guarantee is %u Mbps\n",local_ip,ptr->guarantee_bw);
 }
 
 static void print_tx_context(struct tx_context* ptr)
-{
+{		
 	struct endpoint_tx_context* endpoint_ptr=NULL; 
 	struct pair_tx_context* pair_ptr=NULL;
 	unsigned int pair_num=0;
@@ -153,7 +153,7 @@ static unsigned int Init_pair_tx_context(
 	ptr->guarantee_bw=bw;
 	INIT_LIST_HEAD(&(ptr->list));
 	
-	//Initialize rate limiter of the pair TX context 
+	//Initialize rate limiter of the pair TX context. We set rate to guarantee_bw initially. 
 	if(Init_tbf(&(ptr->rateLimiter),bw,bucket,max_len,flags)==0)
 	{
 		return 0;
@@ -173,10 +173,13 @@ static unsigned int Init_pair_tx_context(
 /* Release resources of pair TX context */
 static void Free_pair_tx_context(struct pair_tx_context* ptr)
 {
-	hrtimer_cancel(&(ptr->timer));
-	tasklet_kill(&(ptr->xmit_timeout));
-	Free_tbf(&(ptr->rateLimiter));
-	kfree(ptr->tbfPtr);
+	if(ptr!=NULL)
+	{
+		hrtimer_cancel(&(ptr->timer));
+		tasklet_kill(&(ptr->xmit_timeout));
+		Free_tbf(&(ptr->rateLimiter));
+		//kfree(ptr->tbfPtr);
+	}
 } 
 
 //Insert a new pair TX context to an endpoint TX context
@@ -190,81 +193,114 @@ static void Insert_tx_pair_endpoint(struct pair_tx_context* pair_ptr, struct end
 		endpoint_ptr->pair_num++;
 		spin_unlock_irqrestore(&endpoint_ptr->endpoint_lock,flags);
 	}
+	else
+	{
+		printk(KERN_INFO "Error: NULL pointer\n");
+	}
 }
 
 //Insert a new pair TX context to a TX context
 static void Insert_tx_pair(struct pair_tx_context* pair_ptr, struct tx_context* ptr)
 {
-	struct endpoint_tx_context* endpoint_ptr=NULL; 
-	list_for_each_entry(endpoint_ptr,&(ptr->endpoint_list),list)
+	if(pair_ptr!=NULL&&ptr!=NULL)
 	{
-		//If the local_ip is matched
-		if(endpoint_ptr->local_ip==pair_ptr->local_ip)
+		struct endpoint_tx_context* endpoint_ptr=NULL; 
+		list_for_each_entry(endpoint_ptr,&(ptr->endpoint_list),list)
 		{
-			//Insert the pair TX context to corresponding endpoint TX context
-			Insert_tx_pair_endpoint(pair_ptr, endpoint_ptr);
-			return;
+			//If the local_ip is matched
+			if(endpoint_ptr->local_ip==pair_ptr->local_ip)
+			{
+				//Insert the pair TX context to corresponding endpoint TX context
+				Insert_tx_pair_endpoint(pair_ptr, endpoint_ptr);
+				return;
+			}
 		}
+		printk(KERN_INFO "Can not find matching endpoint TX information entry\n");
 	}
-	printk(KERN_INFO "Can not find matching endpoint TX information entry\n");
+	else
+	{
+		printk(KERN_INFO "Error: NULL pointer\n");
+	}
 } 
 
 //Insert a new endpoint TX context to a TX context
 static void Insert_tx_endpoint(struct endpoint_tx_context* endpoint_ptr, struct tx_context* ptr)
 {
-	unsigned long flags;		
-	spin_lock_irqsave(&ptr->tx_lock,flags);
-	list_add_tail(&(endpoint_ptr->list),&(ptr->endpoint_list));
-	ptr->endpoint_num++;	
-	spin_unlock_irqrestore(&ptr->tx_lock,flags);
+	if(endpoint_ptr!=NULL&&ptr!=NULL)
+	{
+		unsigned long flags;		
+		spin_lock_irqsave(&ptr->tx_lock,flags);
+		list_add_tail(&(endpoint_ptr->list),&(ptr->endpoint_list));
+		ptr->endpoint_num++;	
+		spin_unlock_irqrestore(&ptr->tx_lock,flags);
+	}
+	else
+	{
+		printk(KERN_INFO "Error: NULL pointer\n");
+	}
 }
 
 static struct pair_tx_context* Search_tx_pair(struct tx_context* ptr, unsigned int local_ip, unsigned int remote_ip)
 {
-	struct pair_tx_context* pair_ptr=NULL;
-	struct endpoint_tx_context* endpoint_ptr=NULL; 
-	
-	list_for_each_entry(endpoint_ptr,&(ptr->endpoint_list),list)
+	if(ptr!=NULL)
 	{
-		if(endpoint_ptr->local_ip==local_ip)
+		struct pair_tx_context* pair_ptr=NULL;
+		struct endpoint_tx_context* endpoint_ptr=NULL; 
+	
+		list_for_each_entry(endpoint_ptr,&(ptr->endpoint_list),list)
 		{
-			list_for_each_entry(pair_ptr,&(endpoint_ptr->pair_list),list)
+			if(endpoint_ptr->local_ip==local_ip)
 			{
-				if(pair_ptr->remote_ip==remote_ip)
+				list_for_each_entry(pair_ptr,&(endpoint_ptr->pair_list),list)
 				{
-					return pair_ptr;
+					if(pair_ptr->remote_ip==remote_ip)
+					{
+						return pair_ptr;
+					}
 				}
 			}
 		}
+		//By default, we cannot find the corresponding entry
+		return NULL;
 	}
-	//By default, we cannot find the corresponding entry
-	return NULL;
+	else
+	{
+		printk(KERN_INFO "Error: NULL pointer\n");
+		return NULL;
+	}
 }
 
 //Clear all endpoint or pair TX information entries 
 static void Empty_tx_context(struct tx_context* ptr)
 {
-	unsigned long flags;		
-	struct endpoint_tx_context* endpoint_ptr=NULL; 
-	struct endpoint_tx_context* endpoint_next=NULL; 
-	struct pair_tx_context* pair_ptr=NULL; 
-	struct pair_tx_context* pair_next=NULL; 
+	if(ptr!=NULL)
+	{
+		unsigned long flags;		
+		struct endpoint_tx_context* endpoint_ptr=NULL; 
+		struct endpoint_tx_context* endpoint_next=NULL; 
+		struct pair_tx_context* pair_ptr=NULL; 
+		struct pair_tx_context* pair_next=NULL; 
 	
-	spin_lock_irqsave(&ptr->tx_lock,flags);
-	list_for_each_entry_safe(endpoint_ptr, endpoint_next, &(ptr->endpoint_list), list)
-    {
-		print_endpoint_tx_context(endpoint_ptr);
-		list_for_each_entry_safe(pair_ptr, pair_next, &(endpoint_ptr->pair_list), list)
+		spin_lock_irqsave(&ptr->tx_lock,flags);
+		list_for_each_entry_safe(endpoint_ptr, endpoint_next, &(ptr->endpoint_list), list)
 		{
-			print_pair_tx_context(pair_ptr);	
-			list_del(&(pair_ptr->list));
-			
-			kfree(pair_ptr);
-		}
-		list_del(&(endpoint_ptr->list));
-		kfree(endpoint_ptr);
-    }	
-	spin_unlock_irqrestore(&ptr->tx_lock,flags);
+			print_endpoint_tx_context(endpoint_ptr);
+			list_for_each_entry_safe(pair_ptr, pair_next, &(endpoint_ptr->pair_list), list)
+			{
+				print_pair_tx_context(pair_ptr);	
+				list_del(&(pair_ptr->list));
+				Free_pair_tx_context(pair_ptr);
+				kfree(pair_ptr);
+			}
+			list_del(&(endpoint_ptr->list));
+			kfree(endpoint_ptr);
+		}	
+		spin_unlock_irqrestore(&ptr->tx_lock,flags);
+	}
+	else
+	{
+		printk(KERN_INFO "Error: NULL pointer\n");
+	}
 }
 
 //Delete a pair TX context (local_ip, remote_ip) from an endpoint TX context
@@ -275,6 +311,12 @@ static unsigned int Delete_tx_pair_endpoint(unsigned int local_ip, unsigned int 
 	struct pair_tx_context* pair_ptr=NULL; 
 	struct pair_tx_context* pair_next=NULL; 
 	
+	if(endpoint_ptr==NULL)
+	{
+		printk(KERN_INFO "Error: NULL pointer\n");
+		return 0;
+	}
+	
 	//No TX pair context in this endpoint
 	if(endpoint_ptr->pair_num==0)
 		return 0;
@@ -282,18 +324,92 @@ static unsigned int Delete_tx_pair_endpoint(unsigned int local_ip, unsigned int 
 	list_for_each_entry_safe(pair_ptr, pair_next, &(endpoint_ptr->pair_list), list)
 	{
 		//print_pair_tx_context(pair_ptr);	
-		//If we find corresponding pair RX entry
+		//If we find corresponding pair TX entry
 		if(pair_ptr->local_ip==local_ip&&pair_ptr->remote_ip==remote_ip)
 		{
 			spin_lock_irqsave(&endpoint_ptr->endpoint_lock,flags);
 			list_del(&(pair_ptr->list));
+			Free_pair_tx_context(pair_ptr);
 			kfree(pair_ptr);
 			endpoint_ptr->pair_num--;
 			spin_unlock_irqrestore(&endpoint_ptr->endpoint_lock,flags);
 			return 1;
 		}
 	}
-	printk(KERN_INFO "Can not delete corresponding pair RX information entry\n");
+	printk(KERN_INFO "Can not delete corresponding pair TX information entry\n");
+	return 0;
+}
+
+//Delete a pair TX context (local_ip, remote_ip) from a TX context
+//Return 1 if delete succeeds
+static unsigned int Delete_tx_pair(unsigned int local_ip, unsigned int remote_ip, struct tx_context* ptr)
+{
+	struct endpoint_tx_context* endpoint_ptr=NULL; 
+	
+	if(ptr==NULL)
+	{
+		printk(KERN_INFO "Error: NULL pointer\n");
+		return 0;
+	}
+	
+	//No TX endpoint context 
+	if(ptr->endpoint_num==0)
+		return 0;
+	
+	list_for_each_entry(endpoint_ptr,&(ptr->endpoint_list),list)
+	{	
+		//If the local_ip is matched
+		if(endpoint_ptr->local_ip==local_ip)
+		{
+			//Delete the pair TX context from the corresponding endpoint TX context
+			return Delete_tx_pair_endpoint(local_ip, remote_ip, endpoint_ptr);
+		}
+	}
+	return 0;
+}
+
+//Delete a endpoint TX context (local_ip) from a TX context
+//Return 1 if delete succeeds
+//Note that all related pair TX entries will also be deleted!
+static unsigned int Delete_tx_endpoint(unsigned int local_ip, struct tx_context* ptr)
+{
+	unsigned long flags;		
+	struct endpoint_tx_context* endpoint_ptr=NULL; 
+	struct endpoint_tx_context* endpoint_next=NULL; 
+	struct pair_tx_context* pair_ptr=NULL; 
+	struct pair_tx_context* pair_next=NULL; 
+	
+	if(ptr==NULL)
+	{
+		printk(KERN_INFO "Error: NULL pointer\n");
+		return 0;
+	}
+	
+	//No TX endpoint context 
+	if(ptr->endpoint_num==0)
+		return 0;
+	
+	list_for_each_entry_safe(endpoint_ptr, endpoint_next, &(ptr->endpoint_list), list)
+    {
+		//If we find corresponding endpoint TX entry
+		if(endpoint_ptr->local_ip==local_ip)
+		{
+			spin_lock_irqsave(&ptr->tx_lock,flags);
+			//Delete all pair TX entries related to this endpoint TX entry
+			list_for_each_entry_safe(pair_ptr, pair_next, &(endpoint_ptr->pair_list), list)
+			{
+				print_pair_tx_context(pair_ptr);	
+				list_del(&(pair_ptr->list));
+				Free_pair_tx_context(pair_ptr);
+				kfree(pair_ptr);
+			}
+			list_del(&(endpoint_ptr->list));
+			kfree(endpoint_ptr);
+			ptr->endpoint_num--;
+			spin_unlock_irqrestore(&ptr->tx_lock,flags);
+			return 1;
+		}
+	}		
 	return 0;
 }
 #endif

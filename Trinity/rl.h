@@ -1,72 +1,55 @@
-#ifdef RL_H
+#ifndef RL_H
 #define RL_H
 
-/* Structure of sk_buff and the function pointer to reinject packets */
-struct Packet
-{
-	int (*okfn)(struct sk_buff *); 
-	struct sk_buff *skb;                  
-};
+#include "params.h"
+#include "tx.h"
 
-/* Token bucket rate limiter */
-struct tbf_rl
+static void xmit_tasklet(unsigned long data)
 {
-	//Array of packets
-	struct Packet* packets;
-	//Head offset  of packets
-	unsigned int head;		
-	//Current queue length
-	unsigned int len;		
-	//Maximum queue length	
-	unsigned int max_len;	
-	//rate in Mbps
-	unsigned int rate;			
-	//tokens in bytes
-	unsigned int tokens;
-	//bucket size in bytes	
-	unsigned int bucket;	
-	//Last update timer of timer
-	ktime_t last_update_time;
-	//Lock for this structure
-	spinlock_t rl_lock;
-};
-
-/* Initialize token bucket rate limiter
- *  tbfPtr: pointer of token bucker rate limiter
- *  rate: rate you want to enforce
- *  bucket: bucket size (maximum burst size)
- *	 max_len: maximum number of packets to store in the queue 
- *  flags: GFP_ATOMIC, GFP_KERNEL, etc. This variable is very imporant! 
- *  if initialization succeeds, the function returns 1. Otherwise, it returns 0.  
- */
-static unsigned int Init_tbf(struct tbf_rl* tbfPtr, unsigned int rate, unsigned int bucket, unsigned int max_len, int flags)
-{
-	if(tbfPtr==NULL)
-		return 0;
+	struct pair_tx_context  *pair_txPtr=(struct pair_txPtr*)data;
+	unsigned int skb_len;
+	ktime_t now=ktime_get();
 	
-	struct Packet* tmp=kmalloc(max_len*sizeof(struct Packet),flags);
-	if(tmp==NULL)
-		return 0;
+	pair_txPtr->rateLimiter.tokens+=ktime_us_delta(now,pair_txPtr->rateLimiter.last_update_time)*(pair_txPtr->rateLimiter.rate)/8;
+	pair_txPtr->rateLimiter.last_update_time=now;
 	
-	tbfPtr->packets=tmp;
-	tbfPtr->head=0;
-	tbfPtr->len=0;
-	tbfPtr->max_len=max_len;
-	tbfPtr->rate=rate;
-	tbfPtr->bucket=bucket;
-	tbfPtr->tokens=bucket;
-	tbfPtr->last_update_time=ktime_get(); //time of now
-	spin_lock_init(&(tbfPtr->rl_lock));
-	return 1;
+	while(1)
+	{
+		if(pair_txPtr->rateLimiter.len>0)
+		{
+			skb_len=pair_txPtr->rateLimiter.packets[pair_txPtr->rateLimiter.head].skb->len;
+			if(skb_len<=pair_txPtr->rateLimiter.tokens)
+			{
+				pair_txPtr->rateLimiter.tokens-=skb_len;
+				spin_lock_bh(&(pair_txPtr->rateLimiter.rl_lock));
+				Dequeue_tbf(&(pair_txPtr->rateLimiter));
+				spin_unlock_bh(&(pair_txPtr->rateLimiter.rl_lock));
+			}
+			else
+			{
+				break;
+			}
+		}
+		else
+		{
+			break;
+		}
+	}
+	
+	if(pair_txPtr->rateLimiter.tokens>=pair_txPtr->rateLimiter.bucket&&pair_txPtr->rateLimiter.len==0)
+		pair_txPtr->rateLimiter.tokens=pair_txPtr->rateLimiter.bucket;	
+		
+	//Start time again
+	hrtimer_start(&(pair_txPtr->timer), ktime_set( 0, pair_txPtr-> timer_interval*1000), HRTIMER_MODE_REL);
 }
 
-/* Release resources of token bucket rate limiter */
-static void Free_tbf(struct tbf_rl* tbfPtr)
+/* HARDIRQ timeout */
+static enum hrtimer_restart my_hrtimer_callback( struct hrtimer *timer )
 {
-	if(tbfPtr!=NULL)
-	{
-		kfree(tbfPtr->packets);
-	}
+	/* schedue xmit tasklet to go into softirq context */
+	struct pair_tx_context  *pair_txPtr= container_of(timer, struct pair_tx_context, timer);
+	tasklet_schedule(&(struct pair_tx_context->xmit_timeout));
+	return HRTIMER_NORESTART;
 }
 
 #endif

@@ -22,6 +22,7 @@
 #include <linux/vmalloc.h>
 #include <linux/list.h>
 
+#include "tx.h"
 #include "rx.h"
 #include "network.h"
 #include "params.h"
@@ -52,6 +53,8 @@ static struct nf_hook_ops nfho_incoming;
 static struct rx_context* rxPtr;
 //Lock for rx information 
 static spinlock_t rxLock;
+//TX context pointer
+static struct tx_context* txPtr;
 
 static int device_open(struct inode *inode, struct file *file) 
 {
@@ -84,7 +87,7 @@ static int device_ioctl(struct file *file, unsigned int ioctl_num, unsigned long
 			if(pairPtr!=NULL)
 			{
 				Init_pair_rx_context(pairPtr,user_pairPtr->local_ip,user_pairPtr->remote_ip,user_pairPtr->rate);
-				Insert_pair(pairPtr,rxPtr);
+				Insert_rx_pair(pairPtr,rxPtr);
 			}
 			else
 			{
@@ -94,7 +97,7 @@ static int device_ioctl(struct file *file, unsigned int ioctl_num, unsigned long
 		//Delete a pair RX context 
 		case IOCTL_DELETE_RX_PAIR:
 			user_pairPtr=(struct pair_rx_context_user*)ioctl_param;
-			Delete_pair(user_pairPtr->local_ip,user_pairPtr->remote_ip,rxPtr);
+			Delete_rx_pair(user_pairPtr->local_ip,user_pairPtr->remote_ip,rxPtr);
 			break;
 		//Insert a new endpoint RX context
 		case IOCTL_INSERT_RX_ENDPOINT:
@@ -103,7 +106,7 @@ static int device_ioctl(struct file *file, unsigned int ioctl_num, unsigned long
 			if(endpointPtr!=NULL)
 			{
 				Init_endpoint_rx_context(endpointPtr,user_endpointPtr->local_ip,user_endpointPtr->guarantee_bw);
-				Insert_endpoint(endpointPtr,rxPtr);
+				Insert_rx_endpoint(endpointPtr,rxPtr);
 			}
 			else
 			{
@@ -113,7 +116,7 @@ static int device_ioctl(struct file *file, unsigned int ioctl_num, unsigned long
 		//Delete an enfpoint RX context
 		case IOCTL_DELETE_RX_ENDPOINT:
 			user_endpointPtr=(struct endpoint_rx_context_user*)ioctl_param;
-			Delete_endpoint(user_endpointPtr->local_ip,rxPtr);
+			Delete_rx_endpoint(user_endpointPtr->local_ip,rxPtr);
 			break;
 		//Display
 		case IOCTL_DISPLAY_RX:
@@ -170,7 +173,7 @@ static unsigned int hook_func_in(unsigned int hooknum, struct sk_buff *skb, cons
 	
 	local_ip=ip_header->daddr;
 	remote_ip=ip_header->saddr;
-	pairPtr=Search_pair(rxPtr,local_ip,remote_ip);
+	pairPtr=Search_rx_pair(rxPtr,local_ip,remote_ip);
 	if(likely(pairPtr!=NULL))
 	{
 		spin_lock_bh(&(pairPtr->pair_lock));

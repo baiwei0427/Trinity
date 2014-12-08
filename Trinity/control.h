@@ -50,4 +50,15 @@ struct endpoint_rx_context_user
 //Display current RX information. The third parameter should be set to NULL in userspace application.
 #define IOCTL_DISPLAY_RX _IOR(MAJOR_NUM, 4, struct endpoint_rx_context_user*)
 
+//Insert a new pair TX context
+#define IOCTL_INSERT_TX_PAIR _IOR(MAJOR_NUM, 5, struct pair_tx_context_user*) 
+//Delete a pair TX context
+#define IOCTL_DELETE_TX_PAIR _IOR(MAJOR_NUM, 6, struct pair_tx_context_user*) 
+//Insert a new endpoint TX context
+#define IOCTL_INSERT_TX_ENDPOINT _IOR(MAJOR_NUM, 7, struct endpoint_tx_context_user*) 
+//Delete a endpoint TX context
+#define IOCTL_DELETE_TX_ENDPOINT _IOR(MAJOR_NUM, 8, struct endpoint_tx_context_user*) 
+//Display current TX information. The third parameter should be set to NULL in userspace application.
+#define IOCTL_DISPLAY_TX _IOR(MAJOR_NUM, 9, struct endpoint_tx_context_user*)
+
 #endif

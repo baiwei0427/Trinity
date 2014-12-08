@@ -163,85 +163,120 @@ static unsigned int Init_pair_rx_context(struct pair_rx_context* ptr, unsigned i
 //Insert a new pair RX context to an endpoint RX context
 static void Insert_rx_pair_endpoint(struct pair_rx_context* pair_ptr, struct endpoint_rx_context* endpoint_ptr)
 {
-	unsigned long flags;		
-	spin_lock_irqsave(&endpoint_ptr->endpoint_lock,flags);
-	list_add_tail(&(pair_ptr->list),&(endpoint_ptr->pair_list));
-	endpoint_ptr->pair_num++;
-	spin_unlock_irqrestore(&endpoint_ptr->endpoint_lock,flags);
+	if(pair_ptr!=NULL&&endpoint_ptr!=NULL)
+	{
+		unsigned long flags;		
+		spin_lock_irqsave(&endpoint_ptr->endpoint_lock,flags);
+		list_add_tail(&(pair_ptr->list),&(endpoint_ptr->pair_list));
+		endpoint_ptr->pair_num++;
+		spin_unlock_irqrestore(&endpoint_ptr->endpoint_lock,flags);
+	}
+	else
+	{
+		printk(KERN_INFO "Error: NULL pointer\n");
+	}
 }
 
 //Insert a new pair RX context to a RX context
 static void Insert_rx_pair(struct pair_rx_context* pair_ptr, struct rx_context* ptr)
 {
-	struct endpoint_rx_context* endpoint_ptr=NULL; 
-	list_for_each_entry(endpoint_ptr,&(ptr->endpoint_list),list)
+	if(pair_ptr!=NULL&&ptr!=NULL)
 	{
-		//If the local_ip is matched
-		if(endpoint_ptr->local_ip==pair_ptr->local_ip)
+		struct endpoint_rx_context* endpoint_ptr=NULL; 
+		list_for_each_entry(endpoint_ptr,&(ptr->endpoint_list),list)
 		{
-			//Insert the pair RX context to corresponding endpoint RX context
-			Insert_pair_endpoint(pair_ptr, endpoint_ptr);
-			return;
+			//If the local_ip is matched
+			if(endpoint_ptr->local_ip==pair_ptr->local_ip)
+			{
+				//Insert the pair RX context to corresponding endpoint RX context
+				Insert_rx_pair_endpoint(pair_ptr, endpoint_ptr);
+				return;
+			}
 		}
+		printk(KERN_INFO "Can not find matching endpoint RX information entry\n");
 	}
-	printk(KERN_INFO "Can not find matching endpoint RX information entry\n");
+	else
+	{
+		printk(KERN_INFO "Error: NULL pointer\n");
+	}
 } 
 
 //Insert a new endpoint RX context to a RX context
 static void Insert_rx_endpoint(struct endpoint_rx_context* endpoint_ptr, struct rx_context* ptr)
 {
-	unsigned long flags;		
-	spin_lock_irqsave(&ptr->rx_lock,flags);
-	list_add_tail(&(endpoint_ptr->list),&(ptr->endpoint_list));
-	ptr->endpoint_num++;	
-	spin_unlock_irqrestore(&ptr->rx_lock,flags);
+	if(endpoint_ptr!=NULL&&ptr!=NULL)
+	{
+		unsigned long flags;		
+		spin_lock_irqsave(&ptr->rx_lock,flags);
+		list_add_tail(&(endpoint_ptr->list),&(ptr->endpoint_list));
+		ptr->endpoint_num++;	
+		spin_unlock_irqrestore(&ptr->rx_lock,flags);
+	}
+	else
+	{
+		printk(KERN_INFO "Error: NULL pointer\n");
+	}
 }
 
 static struct pair_rx_context* Search_rx_pair(struct rx_context* ptr, unsigned int local_ip, unsigned int remote_ip)
 {
-	struct pair_rx_context* pair_ptr=NULL;
-	struct endpoint_rx_context* endpoint_ptr=NULL; 
-	
-	list_for_each_entry(endpoint_ptr,&(ptr->endpoint_list),list)
+	if(ptr!=NULL)
 	{
-		if(endpoint_ptr->local_ip==local_ip)
+		struct pair_rx_context* pair_ptr=NULL;
+		struct endpoint_rx_context* endpoint_ptr=NULL; 
+	
+		list_for_each_entry(endpoint_ptr,&(ptr->endpoint_list),list)
 		{
-			list_for_each_entry(pair_ptr,&(endpoint_ptr->pair_list),list)
+			if(endpoint_ptr->local_ip==local_ip)
 			{
-				if(pair_ptr->remote_ip==remote_ip)
+				list_for_each_entry(pair_ptr,&(endpoint_ptr->pair_list),list)
 				{
-					return pair_ptr;
+					if(pair_ptr->remote_ip==remote_ip)
+					{
+						return pair_ptr;
+					}
 				}
 			}
 		}
+		//By default, we cannot find the corresponding entry
+		return NULL;
 	}
-	//By default, we cannot find the corresponding entry
-	return NULL;
+	else
+	{
+		printk(KERN_INFO "Error: NULL pointer\n");
+		return NULL;
+	}
 }
   
 //Clear all endpoint or pair RX information entries 
 static void Empty_rx_context(struct rx_context* ptr)
 {
-	unsigned long flags;		
-	struct endpoint_rx_context* endpoint_ptr=NULL; 
-	struct endpoint_rx_context* endpoint_next=NULL; 
-	struct pair_rx_context* pair_ptr=NULL; 
-	struct pair_rx_context* pair_next=NULL; 
+	if(ptr!=NULL)
+	{
+		unsigned long flags;		
+		struct endpoint_rx_context* endpoint_ptr=NULL; 
+		struct endpoint_rx_context* endpoint_next=NULL; 
+		struct pair_rx_context* pair_ptr=NULL; 
+		struct pair_rx_context* pair_next=NULL; 
 	
-	spin_lock_irqsave(&ptr->rx_lock,flags);
-	list_for_each_entry_safe(endpoint_ptr, endpoint_next, &(ptr->endpoint_list), list)
-    {
-		print_endpoint_rx_context(endpoint_ptr);
-		list_for_each_entry_safe(pair_ptr, pair_next, &(endpoint_ptr->pair_list), list)
+		spin_lock_irqsave(&ptr->rx_lock,flags);
+		list_for_each_entry_safe(endpoint_ptr, endpoint_next, &(ptr->endpoint_list), list)
 		{
-			print_pair_rx_context(pair_ptr);	
-			list_del(&(pair_ptr->list));
-			kfree(pair_ptr);
-		}
-		list_del(&(endpoint_ptr->list));
-		kfree(endpoint_ptr);
-    }	
-	spin_unlock_irqrestore(&ptr->rx_lock,flags);
+			print_endpoint_rx_context(endpoint_ptr);
+			list_for_each_entry_safe(pair_ptr, pair_next, &(endpoint_ptr->pair_list), list)
+			{
+				print_pair_rx_context(pair_ptr);	
+				list_del(&(pair_ptr->list));
+				kfree(pair_ptr);
+			}
+			list_del(&(endpoint_ptr->list));
+			kfree(endpoint_ptr);
+		}	
+		spin_unlock_irqrestore(&ptr->rx_lock,flags);
+	}
+	{
+		printk(KERN_INFO "Error: NULL pointer\n");
+	}
 }
 
 //Delete a pair RX context (local_ip, remote_ip) from an endpoint RX context
@@ -251,6 +286,12 @@ static unsigned int Delete_rx_pair_endpoint(unsigned int local_ip, unsigned int 
 	unsigned long flags;		
 	struct pair_rx_context* pair_ptr=NULL; 
 	struct pair_rx_context* pair_next=NULL; 
+	
+	if(endpoint_ptr==NULL)
+	{
+		printk(KERN_INFO "Error: NULL pointer\n");
+		return 0;
+	}
 	
 	//No RX pair context in this endpoint
 	if(endpoint_ptr->pair_num==0)
@@ -279,6 +320,12 @@ static unsigned int Delete_rx_pair_endpoint(unsigned int local_ip, unsigned int 
 static unsigned int Delete_rx_pair(unsigned int local_ip, unsigned int remote_ip, struct rx_context* ptr)
 {
 	struct endpoint_rx_context* endpoint_ptr=NULL; 
+		
+	if(ptr==NULL)
+	{
+		printk(KERN_INFO "Error: NULL pointer\n");
+		return 0;
+	}
 	
 	//No RX endpoint context 
 	if(ptr->endpoint_num==0)
@@ -290,7 +337,7 @@ static unsigned int Delete_rx_pair(unsigned int local_ip, unsigned int remote_ip
 		if(endpoint_ptr->local_ip==local_ip)
 		{
 			//Delete the pair RX context from the corresponding endpoint RX context
-			return Delete_pair_endpoint(local_ip, remote_ip, endpoint_ptr);
+			return Delete_rx_pair_endpoint(local_ip, remote_ip, endpoint_ptr);
 		}
 	}
 	return 0;
@@ -306,6 +353,12 @@ static unsigned int Delete_rx_endpoint(unsigned int local_ip, struct rx_context*
 	struct endpoint_rx_context* endpoint_next=NULL; 
 	struct pair_rx_context* pair_ptr=NULL; 
 	struct pair_rx_context* pair_next=NULL; 
+
+	if(ptr==NULL)
+	{
+		printk(KERN_INFO "Error: NULL pointer\n");
+		return 0;
+	}
 	
 	//No RX endpoint context 
 	if(ptr->endpoint_num==0)
