@@ -24,6 +24,7 @@
 
 #include "tx.h"
 #include "rx.h"
+#include "rl.h"
 #include "network.h"
 #include "params.h"
 #include "control.h"
@@ -55,6 +56,8 @@ static struct rx_context* rxPtr;
 static spinlock_t rxLock;
 //TX context pointer
 static struct tx_context* txPtr;
+//Lock for TX information
+static spinlock_t txLock;
 
 static int device_open(struct inode *inode, struct file *file) 
 {
@@ -73,55 +76,102 @@ static int device_release(struct inode *inode, struct file *file)
 //This context of this function should be kernel thread rather than interrupt. Is this correct?
 static int device_ioctl(struct file *file, unsigned int ioctl_num, unsigned long ioctl_param) 
 {
-	struct pair_rx_context_user* user_pairPtr=NULL;
-	struct endpoint_rx_context_user* user_endpointPtr=NULL;
-	struct pair_rx_context* pairPtr=NULL;
-	struct endpoint_rx_context* endpointPtr=NULL;
+	//All possible pointers we will use in this function
+	struct pair_context_user* user_pairPtr=NULL;
+	struct endpoint_context_user* user_endpointPtr=NULL;
+	struct pair_rx_context* rx_pairPtr=NULL;
+	struct pair_tx_context* tx_pairPtr=NULL;
+	struct endpoint_rx_context* rx_endpointPtr=NULL;
+	struct endpoint_tx_context* tx_endpointPtr=NULL;
 	
 	switch (ioctl_num) 
 	{
-		//Insert a new pair RX context
+		//Case 1: Insert a new pair RX context
 		case IOCTL_INSERT_RX_PAIR:
-			user_pairPtr=(struct pair_rx_context_user*)ioctl_param;
-			pairPtr=kmalloc(sizeof(struct pair_rx_context), GFP_KERNEL);	
-			if(pairPtr!=NULL)
+			user_pairPtr=(struct pair_context_user*)ioctl_param;
+			rx_pairPtr=kmalloc(sizeof(struct pair_rx_context), GFP_KERNEL);	
+			if(rx_pairPtr!=NULL)
 			{
-				Init_pair_rx_context(pairPtr,user_pairPtr->local_ip,user_pairPtr->remote_ip,user_pairPtr->rate);
-				Insert_rx_pair(pairPtr,rxPtr);
+				Init_pair_rx_context(rx_pairPtr,user_pairPtr->local_ip,user_pairPtr->remote_ip,user_pairPtr->rate);
+				Insert_rx_pair(rx_pairPtr,rxPtr);
 			}
 			else
 			{
 				printk(KERN_INFO "Kmalloc error when inserting a new pair RX context\n");
 			}
 			break;
-		//Delete a pair RX context 
+		//Case 2: Insert a new pair TX context
+		case IOCTL_INSERT_TX_PAIR:
+			user_pairPtr=(struct pair_context_user*)ioctl_param;
+			tx_pairPtr=kmalloc(sizeof(struct pair_tx_context), GFP_KERNEL);	
+			if(tx_pairPtr!=NULL)
+			{
+				Init_pair_tx_context(tx_pairPtr,user_pairPtr->local_ip,user_pairPtr->remote_ip,user_pairPtr->rate,
+				BUCKET_SIZE_BYTES, MAX_QUEUE_LEN,&xmit_tasklet, &my_hrtimer_callback, TIMER_INTERVAL_US,GFP_KERNEL);
+				Insert_tx_pair(tx_pairPtr,txPtr);
+			}
+			else
+			{
+				printk(KERN_INFO "Kmalloc error when inserting a new pair TX context\n");
+			}
+			break;
+		//Case 3: Delete a pair RX context 
 		case IOCTL_DELETE_RX_PAIR:
-			user_pairPtr=(struct pair_rx_context_user*)ioctl_param;
+			user_pairPtr=(struct pair_context_user*)ioctl_param;
 			Delete_rx_pair(user_pairPtr->local_ip,user_pairPtr->remote_ip,rxPtr);
 			break;
-		//Insert a new endpoint RX context
+		//Case 4: Delete a pair TX context
+		case IOCTL_DELETE_TX_PAIR:
+			user_pairPtr=(struct pair_context_user*)ioctl_param;
+			Delete_tx_pair(user_pairPtr->local_ip,user_pairPtr->remote_ip,txPtr);
+			break;
+		//Case 5: Insert a new endpoint RX context
 		case IOCTL_INSERT_RX_ENDPOINT:
-			user_endpointPtr=(struct endpoint_rx_context_user*)ioctl_param;
-			endpointPtr=kmalloc(sizeof(struct endpoint_rx_context), GFP_KERNEL);	
-			if(endpointPtr!=NULL)
+			user_endpointPtr=(struct endpoint_context_user*)ioctl_param;
+			rx_endpointPtr=kmalloc(sizeof(struct endpoint_rx_context), GFP_KERNEL);	
+			if(rx_endpointPtr!=NULL)
 			{
-				Init_endpoint_rx_context(endpointPtr,user_endpointPtr->local_ip,user_endpointPtr->guarantee_bw);
-				Insert_rx_endpoint(endpointPtr,rxPtr);
+				Init_endpoint_rx_context(rx_endpointPtr,user_endpointPtr->local_ip,user_endpointPtr->rate);
+				Insert_rx_endpoint(rx_endpointPtr,rxPtr);
 			}
 			else
 			{
 				printk(KERN_INFO "Kmalloc error when inserting a new endpoint RX context\n");	
 			}
 			break;
-		//Delete an enfpoint RX context
+		//Case 6: Insert a new endpoint TX context
+		case IOCTL_INSERT_TX_ENDPOINT:
+			user_endpointPtr=(struct endpoint_context_user*)ioctl_param;
+			tx_endpointPtr=kmalloc(sizeof(struct endpoint_tx_context), GFP_KERNEL);	
+			if(tx_endpointPtr!=NULL)
+			{
+				Init_endpoint_tx_context(tx_endpointPtr,user_endpointPtr->local_ip,user_endpointPtr->rate);
+				Insert_tx_endpoint(tx_endpointPtr,txPtr);
+			}
+			else
+			{
+				printk(KERN_INFO "Kmalloc error when inserting a new endpoint TX context\n");		
+			}
+			break;
+		//Case 7: Delete an endpoint RX context
 		case IOCTL_DELETE_RX_ENDPOINT:
-			user_endpointPtr=(struct endpoint_rx_context_user*)ioctl_param;
+			user_endpointPtr=(struct endpoint_context_user*)ioctl_param;
 			Delete_rx_endpoint(user_endpointPtr->local_ip,rxPtr);
 			break;
-		//Display
+		//Case 8: Delete an endpoint TX context
+		case IOCTL_DELETE_TX_ENDPOINT:
+			user_endpointPtr=(struct endpoint_context_user*)ioctl_param;
+			Delete_tx_endpoint(user_endpointPtr->local_ip,txPtr);
+			break;
+		//Case 9: Display RX
 		case IOCTL_DISPLAY_RX:
 			print_rx_context(rxPtr);
 			break;
+		//Case 10: Display TX
+		case IOCTL_DISPLAY_TX:
+			print_tx_context(txPtr);
+			break;
+			
 	}
 	return SUCCESS;	
 }
@@ -138,12 +188,39 @@ struct file_operations ops = {
 //POSTROUTING for outgoing packets
 static unsigned int hook_func_out(unsigned int hooknum, struct sk_buff *skb, const struct net_device *in, const struct net_device *out, int (*okfn)(struct sk_buff *))
 {
+	struct pair_tx_context* pairPtr=NULL;
+	struct iphdr *ip_header=NULL;		
+	unsigned int local_ip;
+	unsigned int remote_ip;
+	unsigned int result;
+	
 	if(!out)
 		return NF_ACCEPT;
         
 	if(strcmp(out->name,param_dev)!=0)
 		return NF_ACCEPT;
+
+	ip_header=(struct iphdr *)skb_network_header(skb);
 	
+	//The packet is not ip packet (e.g. ARP or others)
+	if (likely(!ip_header))
+		return NF_ACCEPT;
+	
+	local_ip=ip_header->saddr;
+	remote_ip=ip_header->daddr;
+	pairPtr=Search_tx_pair(txPtr,local_ip,remote_ip);
+	
+	if(likely(pairPtr!=NULL))
+	{
+		spin_lock_bh(&(pairPtr->rateLimiter.rl_lock));
+		result=Enqueue_tbf(&(pairPtr->rateLimiter),skb,okfn);
+		spin_unlock_bh(&(pairPtr->rateLimiter.rl_lock));
+		//If enqueue succeeds
+		if(result==1)
+			return NF_STOLEN;
+		else
+			return NF_DROP;
+	}
 	return NF_ACCEPT;
 }
 
@@ -155,7 +232,7 @@ static unsigned int hook_func_in(unsigned int hooknum, struct sk_buff *skb, cons
 	struct iphdr *ip_header;		//IP  header structure
 	unsigned int local_ip;
 	unsigned int remote_ip;
-	unsigned long flags;					//variable for save current states of irq
+	//unsigned long flags;					//variable for save current states of irq
 	unsigned int bit=0;					//feedback information
 	unsigned short int feedback=0;
 	
@@ -242,6 +319,12 @@ int init_module()
 	//Initialize rxLock
 	spin_lock_init(&rxLock);
 	
+	//Initialize tX context information
+	txPtr=kmalloc(sizeof(struct rx_context), GFP_KERNEL);
+	Init_tx_context(txPtr);
+	//Initialize rxLock
+	spin_lock_init(&txLock);
+	
 	//NF_PRE_ROUTING Hook
 	nfho_incoming.hook = hook_func_in;							
 	nfho_incoming.hooknum =  NF_INET_PRE_ROUTING;		
@@ -278,6 +361,8 @@ void cleanup_module()
 	
 	Empty_rx_context(rxPtr);	
 	kfree(rxPtr);
+	Empty_tx_context(txPtr);
+	kfree(txPtr);
 	printk(KERN_INFO "Stop Trinity kernel module\n");
 	
 }

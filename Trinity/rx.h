@@ -73,14 +73,14 @@ static void print_pair_rx_context(struct pair_rx_context* ptr)
 	}
 	snprintf(local_ip, 16, "%pI4", &(ptr->local_ip));
 	snprintf(remote_ip, 16, "%pI4", &(ptr->remote_ip));
-	printk(KERN_INFO "%s to %s, ECN marking fraction %u%%, bandwidth guarantee is %u Mbps, actual incoming throughput is %u Mbps\n",remote_ip,local_ip,fraction,ptr->rate,throughput);
+	printk(KERN_INFO "RX: %s to %s, ECN marking fraction %u%%, bandwidth guarantee is %u Mbps, actual incoming throughput is %u Mbps\n",remote_ip,local_ip,fraction,ptr->rate,throughput);
 }
 
 static void print_endpoint_rx_context(struct endpoint_rx_context* ptr)
 {
 	char local_ip[16]={0};      
 	snprintf(local_ip, 16, "%pI4", &(ptr->local_ip));
-	printk(KERN_INFO "%s, endpoint bandwidth guarantee is %u Mbps\n",local_ip,ptr->guarantee_bw);
+	printk(KERN_INFO "RX: %s, endpoint bandwidth guarantee is %u Mbps\n",local_ip,ptr->guarantee_bw);
 }
 
 static void print_rx_context(struct rx_context* ptr)
@@ -98,7 +98,7 @@ static void print_rx_context(struct rx_context* ptr)
 			print_pair_rx_context(pair_ptr);
 		}
 	}	
-	printk(KERN_INFO "There are %u endpoint RX entries and %u pair RX entries in total\n",ptr->endpoint_num,pair_num);
+	printk(KERN_INFO "RX: There are %u endpoint RX entries and %u pair RX entries in total\n",ptr->endpoint_num,pair_num);
 }
 
 /* Initialize RX context and return 1 if it succeeds */

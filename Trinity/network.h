@@ -66,16 +66,16 @@ static unsigned int generate_feedback(unsigned int bit, struct sk_buff *pkt)
 
 static void enable_ecn(struct sk_buff *skb)
 {
-	struct iphdr *iph = ip_hdr(skb);
+	struct iphdr *iph =ip_hdr(skb);
 	if(iph!=NULL)
 	{
 		ipv4_change_dsfield(iph, 0xff, iph->tos | INET_ECN_ECT_0);
 	}
 }
 
-static inline clear_ecn(struct sk_buff *skb)
+static void clear_ecn(struct sk_buff *skb)
 {
-	struct iphdr *iph = ip_hdr(skb);
+	struct iphdr *iph=ip_hdr(skb);
 	if(iph!=NULL)
 	{
 		ipv4_change_dsfield(iph, 0xff, iph->tos & ~0x3);

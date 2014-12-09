@@ -6,7 +6,7 @@
 
 static void xmit_tasklet(unsigned long data)
 {
-	struct pair_tx_context  *pair_txPtr=(struct pair_txPtr*)data;
+	struct pair_tx_context  *pair_txPtr=(struct pair_tx_context*)data;
 	unsigned int skb_len;
 	ktime_t now=ktime_get();
 	
@@ -48,7 +48,7 @@ static enum hrtimer_restart my_hrtimer_callback( struct hrtimer *timer )
 {
 	/* schedue xmit tasklet to go into softirq context */
 	struct pair_tx_context  *pair_txPtr= container_of(timer, struct pair_tx_context, timer);
-	tasklet_schedule(&(struct pair_tx_context->xmit_timeout));
+	tasklet_schedule(&(pair_txPtr->xmit_timeout));
 	return HRTIMER_NORESTART;
 }
 

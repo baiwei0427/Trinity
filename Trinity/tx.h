@@ -57,14 +57,14 @@ static void print_pair_tx_context(struct pair_tx_context* ptr)
 	char remote_ip[16]={0};
 	snprintf(local_ip, 16, "%pI4", &(ptr->local_ip));
 	snprintf(remote_ip, 16, "%pI4", &(ptr->remote_ip));
-	printk(KERN_INFO "%s to %s, bandwidth guarantee is %u Mbps, actual rate is %u Mbps\n",remote_ip,local_ip,ptr->guarantee_bw,ptr->rateLimiter.rate);
+	printk(KERN_INFO "TX: %s to %s, bandwidth guarantee is %u Mbps, actual rate is %u Mbps\n",local_ip,remote_ip,ptr->guarantee_bw,ptr->rateLimiter.rate);
 }
 
 static void print_endpoint_tx_context(struct endpoint_tx_context* ptr)
 {		
 	char local_ip[16]={0};      
 	snprintf(local_ip, 16, "%pI4", &(ptr->local_ip));
-	printk(KERN_INFO "%s, endpoint bandwidth guarantee is %u Mbps\n",local_ip,ptr->guarantee_bw);
+	printk(KERN_INFO "TX: %s, endpoint bandwidth guarantee is %u Mbps\n",local_ip,ptr->guarantee_bw);
 }
 
 static void print_tx_context(struct tx_context* ptr)
@@ -82,7 +82,7 @@ static void print_tx_context(struct tx_context* ptr)
 			print_pair_tx_context(pair_ptr);
 		}
 	}	
-	printk(KERN_INFO "There are %u endpoint TX entries and %u pair TX entries in total\n",ptr->endpoint_num,pair_num);
+	printk(KERN_INFO "TX: There are %u endpoint TX entries and %u pair TX entries in total\n",ptr->endpoint_num,pair_num);
 }
 
 /* Initialize TX context and return 1 if it succeeds. */
