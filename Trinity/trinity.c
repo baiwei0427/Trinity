@@ -22,9 +22,10 @@
 #include <linux/vmalloc.h>
 #include <linux/list.h>
 
-#include "tx.h"
+#include "tx.h"				
 #include "rx.h"
 #include "rl.h"
+#include "rc.h"
 #include "network.h"
 #include "params.h"
 #include "control.h"
@@ -188,7 +189,7 @@ struct file_operations ops = {
 //POSTROUTING for outgoing packets
 static unsigned int hook_func_out(unsigned int hooknum, struct sk_buff *skb, const struct net_device *in, const struct net_device *out, int (*okfn)(struct sk_buff *))
 {
-	struct pair_tx_context* pairPtr=NULL;
+	struct pair_tx_context* pair_txPtr=NULL;
 	struct iphdr *ip_header=NULL;		
 	unsigned int local_ip;
 	unsigned int remote_ip;
@@ -208,13 +209,13 @@ static unsigned int hook_func_out(unsigned int hooknum, struct sk_buff *skb, con
 	
 	local_ip=ip_header->saddr;
 	remote_ip=ip_header->daddr;
-	pairPtr=Search_tx_pair(txPtr,local_ip,remote_ip);
+	pair_txPtr=Search_tx_pair(txPtr,local_ip,remote_ip);
 	
-	if(likely(pairPtr!=NULL))
+	if(likely(pair_txPtr!=NULL))
 	{
-		spin_lock_bh(&(pairPtr->rateLimiter.rl_lock));
-		result=Enqueue_tbf(&(pairPtr->rateLimiter),skb,okfn);
-		spin_unlock_bh(&(pairPtr->rateLimiter.rl_lock));
+		spin_lock_bh(&(pair_txPtr->rateLimiter.rl_lock));
+		result=Enqueue_tbf(&(pair_txPtr->rateLimiter),skb,okfn);
+		spin_unlock_bh(&(pair_txPtr->rateLimiter.rl_lock));
 		//If enqueue succeeds
 		if(result==1)
 			return NF_STOLEN;
@@ -227,7 +228,8 @@ static unsigned int hook_func_out(unsigned int hooknum, struct sk_buff *skb, con
 //PREROUTING for incoming packets
 static unsigned int hook_func_in(unsigned int hooknum, struct sk_buff *skb, const struct net_device *in, const struct net_device *out, int (*okfn)(struct sk_buff *))
 {
-	struct pair_rx_context* pairPtr=NULL;
+	struct pair_rx_context* pair_rxPtr=NULL;
+	struct pair_tx_context* pair_txPtr=NULL;
 	ktime_t now;
 	struct iphdr *ip_header;		//IP  header structure
 	unsigned int local_ip;
@@ -235,6 +237,8 @@ static unsigned int hook_func_in(unsigned int hooknum, struct sk_buff *skb, cons
 	//unsigned long flags;					//variable for save current states of irq
 	unsigned int bit=0;					//feedback information
 	unsigned short int feedback=0;
+	unsigned int *ip_opt=NULL;
+	unsigned int ECN_fraction=0;
 	
 	if(!in)
 		return NF_ACCEPT;
@@ -250,42 +254,68 @@ static unsigned int hook_func_in(unsigned int hooknum, struct sk_buff *skb, cons
 	
 	local_ip=ip_header->daddr;
 	remote_ip=ip_header->saddr;
-	pairPtr=Search_rx_pair(rxPtr,local_ip,remote_ip);
-	if(likely(pairPtr!=NULL))
+	//If it's control packet, we need to do some special operations here
+	if(unlikely((u8)(ip_header->protocol)==FEEDBACK_PACKET_IPPROTO))
 	{
-		spin_lock_bh(&(pairPtr->pair_lock));
+		//Retrieve ECN fraction information
+		ip_opt=(unsigned int*)ip_header+sizeof(struct iphdr)/4;
+		if(ip_opt!=NULL)
+		{
+			ECN_fraction=ntohl(*ip_opt);
+			pair_txPtr=Search_tx_pair(txPtr,local_ip,remote_ip);
+			if(pair_txPtr!=NULL)
+			{
+				if(ECN_fraction!=0)
+				{
+					//Set rate to guarantee bandwidth
+					pair_txPtr->rateLimiter.rate=pair_txPtr->guarantee_bw;
+				}
+				else 
+				{
+					pair_txPtr->rateLimiter.rate=elasticswitch_rc(pair_txPtr->rateLimiter.rate, LINK_CAPACITY);
+				}
+			}
+		}
+		//We should not let any VM receive this packet
+		return NF_DROP;
+	}
+	
+	pair_rxPtr=Search_rx_pair(rxPtr,local_ip,remote_ip);
+	if(likely(pair_rxPtr!=NULL))
+	{
+		spin_lock_bh(&(pair_rxPtr->pair_lock));
 		//spin_lock_irqsave(&rxLock,flags);
 		now=ktime_get();
-		pairPtr->last_update_time=now;
+		pair_rxPtr->last_update_time=now;
 		//If the interval is larger than control interval
-		if(ktime_us_delta(now,pairPtr->start_update_time)>=CONTROL_INTERVAL_US)    
+		if(ktime_us_delta(now,pair_rxPtr->start_update_time)>=CONTROL_INTERVAL_US)    
 		{
 			//We need to generate feedback packet now
 			feedback=1;
 			//Calculate the fraction of ECN marking in this control interval
 			//If pairPtr->stats.rx_bytes==0, bit=0 by default
-			if(pairPtr->stats.rx_bytes>0)
+			if(pair_rxPtr->stats.rx_bytes>0)
 			{
-				bit=pairPtr->stats.rx_ecn_bytes*100/pairPtr->stats.rx_bytes;			
-				print_pair_rx_context(pairPtr);
+				bit=pair_rxPtr->stats.rx_ecn_bytes*100/pair_rxPtr->stats.rx_bytes;			
+				print_pair_rx_context(pair_rxPtr);
 			}
-			pairPtr->stats.rx_bytes=0;
-			pairPtr->stats.rx_ecn_bytes=0;
-			pairPtr->start_update_time=now;
+			pair_rxPtr->stats.rx_bytes=0;
+			pair_rxPtr->stats.rx_ecn_bytes=0;
+			pair_rxPtr->start_update_time=now;
 		}
-		pairPtr->stats.rx_bytes+=skb->len;
+		pair_rxPtr->stats.rx_bytes+=skb->len;
 		//If the packet is marked with ECN (CE bits==11)
 		if((ip_header->tos<<6)==0xc0)
 		{
-			pairPtr->stats.rx_ecn_bytes+=skb->len;
+			pair_rxPtr->stats.rx_ecn_bytes+=skb->len;
 		}
-		spin_unlock_bh(&(pairPtr->pair_lock));
+		spin_unlock_bh(&(pair_rxPtr->pair_lock));
 		//spin_unlock_irqrestore(&rxLock,flags);
 		//Generate feedback packet now 
 		if(feedback==1)
 			generate_feedback(bit,skb);
 	}
-		
+	clear_ecn(skb);
 	return NF_ACCEPT;	
 }
 

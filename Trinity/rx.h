@@ -104,7 +104,7 @@ static void print_rx_context(struct rx_context* ptr)
 /* Initialize RX context and return 1 if it succeeds */
 static unsigned int Init_rx_context(struct rx_context* ptr)
 {
-	if(ptr!=NULL)
+	if(likely(ptr!=NULL))
 	{
 		ptr->endpoint_num=0;
 		spin_lock_init(&(ptr->rx_lock));
@@ -120,7 +120,7 @@ static unsigned int Init_rx_context(struct rx_context* ptr)
 /* Initialize endpoint RX context and return 1 if it succeeds */
 static unsigned int Init_endpoint_rx_context(struct endpoint_rx_context* ptr, unsigned int ip, unsigned int bw)
 {
-	if(ptr!=NULL)
+	if(likely(ptr!=NULL))
 	{
 		ptr->pair_num=0;
 		ptr->local_ip=ip;
@@ -139,7 +139,7 @@ static unsigned int Init_endpoint_rx_context(struct endpoint_rx_context* ptr, un
 /* Initialize pair RX context and return 1 if it succeeds */
 static unsigned int Init_pair_rx_context(struct pair_rx_context* ptr, unsigned int local_ip, unsigned int remote_ip, unsigned int bw)
 {
-	if(ptr!=NULL)
+	if(likely(ptr!=NULL))
 	{
 		ktime_t now=ktime_get();
 		ptr->local_ip=local_ip;
@@ -163,7 +163,7 @@ static unsigned int Init_pair_rx_context(struct pair_rx_context* ptr, unsigned i
 //Insert a new pair RX context to an endpoint RX context
 static void Insert_rx_pair_endpoint(struct pair_rx_context* pair_ptr, struct endpoint_rx_context* endpoint_ptr)
 {
-	if(pair_ptr!=NULL&&endpoint_ptr!=NULL)
+	if(likely(pair_ptr!=NULL&&endpoint_ptr!=NULL))
 	{
 		unsigned long flags;		
 		spin_lock_irqsave(&endpoint_ptr->endpoint_lock,flags);
@@ -180,7 +180,7 @@ static void Insert_rx_pair_endpoint(struct pair_rx_context* pair_ptr, struct end
 //Insert a new pair RX context to a RX context
 static void Insert_rx_pair(struct pair_rx_context* pair_ptr, struct rx_context* ptr)
 {
-	if(pair_ptr!=NULL&&ptr!=NULL)
+	if(likely(pair_ptr!=NULL&&ptr!=NULL))
 	{
 		struct endpoint_rx_context* endpoint_ptr=NULL; 
 		list_for_each_entry(endpoint_ptr,&(ptr->endpoint_list),list)
@@ -204,7 +204,7 @@ static void Insert_rx_pair(struct pair_rx_context* pair_ptr, struct rx_context* 
 //Insert a new endpoint RX context to a RX context
 static void Insert_rx_endpoint(struct endpoint_rx_context* endpoint_ptr, struct rx_context* ptr)
 {
-	if(endpoint_ptr!=NULL&&ptr!=NULL)
+	if(likely(endpoint_ptr!=NULL&&ptr!=NULL))
 	{
 		unsigned long flags;		
 		spin_lock_irqsave(&ptr->rx_lock,flags);
@@ -220,7 +220,7 @@ static void Insert_rx_endpoint(struct endpoint_rx_context* endpoint_ptr, struct 
 
 static struct pair_rx_context* Search_rx_pair(struct rx_context* ptr, unsigned int local_ip, unsigned int remote_ip)
 {
-	if(ptr!=NULL)
+	if(likely(ptr!=NULL))
 	{
 		struct pair_rx_context* pair_ptr=NULL;
 		struct endpoint_rx_context* endpoint_ptr=NULL; 
@@ -251,7 +251,7 @@ static struct pair_rx_context* Search_rx_pair(struct rx_context* ptr, unsigned i
 //Clear all endpoint or pair RX information entries 
 static void Empty_rx_context(struct rx_context* ptr)
 {
-	if(ptr!=NULL)
+	if(likely(ptr!=NULL))
 	{
 		unsigned long flags;		
 		struct endpoint_rx_context* endpoint_ptr=NULL; 
@@ -287,14 +287,14 @@ static unsigned int Delete_rx_pair_endpoint(unsigned int local_ip, unsigned int 
 	struct pair_rx_context* pair_ptr=NULL; 
 	struct pair_rx_context* pair_next=NULL; 
 	
-	if(endpoint_ptr==NULL)
+	if(unlikely(endpoint_ptr==NULL))
 	{
 		printk(KERN_INFO "Error: NULL pointer\n");
 		return 0;
 	}
 	
 	//No RX pair context in this endpoint
-	if(endpoint_ptr->pair_num==0)
+	if(unlikely(endpoint_ptr->pair_num==0))
 		return 0;
 		
 	list_for_each_entry_safe(pair_ptr, pair_next, &(endpoint_ptr->pair_list), list)
@@ -321,14 +321,14 @@ static unsigned int Delete_rx_pair(unsigned int local_ip, unsigned int remote_ip
 {
 	struct endpoint_rx_context* endpoint_ptr=NULL; 
 		
-	if(ptr==NULL)
+	if(unlikely(ptr==NULL))
 	{
 		printk(KERN_INFO "Error: NULL pointer\n");
 		return 0;
 	}
 	
 	//No RX endpoint context 
-	if(ptr->endpoint_num==0)
+	if(unlikely(ptr->endpoint_num==0))
 		return 0;
 	
 	list_for_each_entry(endpoint_ptr,&(ptr->endpoint_list),list)
@@ -354,14 +354,14 @@ static unsigned int Delete_rx_endpoint(unsigned int local_ip, struct rx_context*
 	struct pair_rx_context* pair_ptr=NULL; 
 	struct pair_rx_context* pair_next=NULL; 
 
-	if(ptr==NULL)
+	if(unlikely(ptr==NULL))
 	{
 		printk(KERN_INFO "Error: NULL pointer\n");
 		return 0;
 	}
 	
 	//No RX endpoint context 
-	if(ptr->endpoint_num==0)
+	if(unlikely(ptr->endpoint_num==0))
 		return 0;
 	
 	list_for_each_entry_safe(endpoint_ptr, endpoint_next, &(ptr->endpoint_list), list)

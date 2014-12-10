@@ -31,7 +31,7 @@ static unsigned int generate_feedback(unsigned int bit, struct sk_buff *pkt)
 	iph_to->ihl=FEEDBACK_HEADER_SIZE/4;
 	iph_to->tos=FEEDBACK_PACKET_TOS; 
 	iph_to->tot_len =htons(FEEDBACK_HEADER_SIZE);
-	iph_to->id=0;//htons(bit); If I set id=htons(bit) here, kernel will crash. I don't know why.
+	iph_to->id=0;
 	iph_to->frag_off=0;
 	iph_to->protocol=(u8)FEEDBACK_PACKET_IPPROTO;
 	iph_to->check=0;

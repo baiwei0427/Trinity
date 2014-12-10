@@ -88,7 +88,7 @@ static void print_tx_context(struct tx_context* ptr)
 /* Initialize TX context and return 1 if it succeeds. */
 static unsigned int Init_tx_context(struct tx_context* ptr)
 {
-	if(ptr!=NULL)
+	if(likely(ptr!=NULL))
 	{
 		ptr->endpoint_num=0;
 		spin_lock_init(&(ptr->tx_lock));
@@ -104,7 +104,7 @@ static unsigned int Init_tx_context(struct tx_context* ptr)
 /* Initialize endpoint TX context and return 1 if it succeeds. */
 static unsigned int Init_endpoint_tx_context(struct endpoint_tx_context* ptr, unsigned int ip, unsigned int bw)
 {
-	if(ptr!=NULL)
+	if(likely(ptr!=NULL))
 	{
 		ptr->pair_num=0;
 		ptr->local_ip=ip;
@@ -145,7 +145,7 @@ static unsigned int Init_pair_tx_context(
 	unsigned int delay,
 	int flags)
 {
-	if(ptr==NULL)
+	if(unlikely(ptr==NULL))
 		return 0;
 	
 	ptr->local_ip=local_ip;
@@ -154,7 +154,7 @@ static unsigned int Init_pair_tx_context(
 	INIT_LIST_HEAD(&(ptr->list));
 	
 	//Initialize rate limiter of the pair TX context. We set rate to guarantee_bw initially. 
-	if(Init_tbf(&(ptr->rateLimiter),bw,bucket,max_len,flags)==0)
+	if(unlikely(Init_tbf(&(ptr->rateLimiter),bw,bucket,max_len,flags)==0))
 	{
 		return 0;
 	}
@@ -173,7 +173,7 @@ static unsigned int Init_pair_tx_context(
 /* Release resources of pair TX context */
 static void Free_pair_tx_context(struct pair_tx_context* ptr)
 {
-	if(ptr!=NULL)
+	if(likely(ptr!=NULL))
 	{
 		hrtimer_cancel(&(ptr->timer));
 		tasklet_kill(&(ptr->xmit_timeout));
@@ -185,7 +185,7 @@ static void Free_pair_tx_context(struct pair_tx_context* ptr)
 //Insert a new pair TX context to an endpoint TX context
 static void Insert_tx_pair_endpoint(struct pair_tx_context* pair_ptr, struct endpoint_tx_context* endpoint_ptr)
 {
-	if(pair_ptr!=NULL&&endpoint_ptr!=NULL)
+	if(likely(pair_ptr!=NULL&&endpoint_ptr!=NULL))
 	{
 		unsigned long flags;		
 		spin_lock_irqsave(&endpoint_ptr->endpoint_lock,flags);
@@ -202,7 +202,7 @@ static void Insert_tx_pair_endpoint(struct pair_tx_context* pair_ptr, struct end
 //Insert a new pair TX context to a TX context
 static void Insert_tx_pair(struct pair_tx_context* pair_ptr, struct tx_context* ptr)
 {
-	if(pair_ptr!=NULL&&ptr!=NULL)
+	if(likely(pair_ptr!=NULL&&ptr!=NULL))
 	{
 		struct endpoint_tx_context* endpoint_ptr=NULL; 
 		list_for_each_entry(endpoint_ptr,&(ptr->endpoint_list),list)
@@ -226,7 +226,7 @@ static void Insert_tx_pair(struct pair_tx_context* pair_ptr, struct tx_context* 
 //Insert a new endpoint TX context to a TX context
 static void Insert_tx_endpoint(struct endpoint_tx_context* endpoint_ptr, struct tx_context* ptr)
 {
-	if(endpoint_ptr!=NULL&&ptr!=NULL)
+	if(likely(endpoint_ptr!=NULL&&ptr!=NULL))
 	{
 		unsigned long flags;		
 		spin_lock_irqsave(&ptr->tx_lock,flags);
@@ -242,7 +242,7 @@ static void Insert_tx_endpoint(struct endpoint_tx_context* endpoint_ptr, struct 
 
 static struct pair_tx_context* Search_tx_pair(struct tx_context* ptr, unsigned int local_ip, unsigned int remote_ip)
 {
-	if(ptr!=NULL)
+	if(likely(ptr!=NULL))
 	{
 		struct pair_tx_context* pair_ptr=NULL;
 		struct endpoint_tx_context* endpoint_ptr=NULL; 
@@ -273,7 +273,7 @@ static struct pair_tx_context* Search_tx_pair(struct tx_context* ptr, unsigned i
 //Clear all endpoint or pair TX information entries 
 static void Empty_tx_context(struct tx_context* ptr)
 {
-	if(ptr!=NULL)
+	if(likely(ptr!=NULL))
 	{
 		unsigned long flags;		
 		struct endpoint_tx_context* endpoint_ptr=NULL; 
@@ -311,14 +311,14 @@ static unsigned int Delete_tx_pair_endpoint(unsigned int local_ip, unsigned int 
 	struct pair_tx_context* pair_ptr=NULL; 
 	struct pair_tx_context* pair_next=NULL; 
 	
-	if(endpoint_ptr==NULL)
+	if(unlikely(endpoint_ptr==NULL))
 	{
 		printk(KERN_INFO "Error: NULL pointer\n");
 		return 0;
 	}
 	
 	//No TX pair context in this endpoint
-	if(endpoint_ptr->pair_num==0)
+	if(unlikely(endpoint_ptr->pair_num==0))
 		return 0;
 		
 	list_for_each_entry_safe(pair_ptr, pair_next, &(endpoint_ptr->pair_list), list)
@@ -346,14 +346,14 @@ static unsigned int Delete_tx_pair(unsigned int local_ip, unsigned int remote_ip
 {
 	struct endpoint_tx_context* endpoint_ptr=NULL; 
 	
-	if(ptr==NULL)
+	if(unlikely(ptr==NULL))
 	{
 		printk(KERN_INFO "Error: NULL pointer\n");
 		return 0;
 	}
 	
 	//No TX endpoint context 
-	if(ptr->endpoint_num==0)
+	if(unlikely(ptr->endpoint_num==0))
 		return 0;
 	
 	list_for_each_entry(endpoint_ptr,&(ptr->endpoint_list),list)
@@ -379,14 +379,14 @@ static unsigned int Delete_tx_endpoint(unsigned int local_ip, struct tx_context*
 	struct pair_tx_context* pair_ptr=NULL; 
 	struct pair_tx_context* pair_next=NULL; 
 	
-	if(ptr==NULL)
+	if(unlikely(ptr==NULL))
 	{
 		printk(KERN_INFO "Error: NULL pointer\n");
 		return 0;
 	}
 	
 	//No TX endpoint context 
-	if(ptr->endpoint_num==0)
+	if(unlikely(ptr->endpoint_num==0))
 		return 0;
 	
 	list_for_each_entry_safe(endpoint_ptr, endpoint_next, &(ptr->endpoint_list), list)
