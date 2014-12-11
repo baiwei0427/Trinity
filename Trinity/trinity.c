@@ -46,9 +46,9 @@ static int device_open(struct inode *, struct file *);
 static int device_release(struct inode *, struct file *);
 //user space-kernel space communication (for Linux kernel 2.6.38.3)
 static int device_ioctl(struct file *, unsigned int, unsigned long) ; 
-//Hook for outgoing packets at POSTROUTING
+//Hook for outgoing packets 
 static struct nf_hook_ops nfho_outgoing;
-//Hook for outgoing packets at PREROUTING
+//Hook for outgoing packets 
 static struct nf_hook_ops nfho_incoming;
 
 //RX context pointer
@@ -204,7 +204,7 @@ static unsigned int hook_func_out(unsigned int hooknum, struct sk_buff *skb, con
 	ip_header=(struct iphdr *)skb_network_header(skb);
 	
 	//The packet is not ip packet (e.g. ARP or others)
-	if (likely(!ip_header))
+	if (unlikely(ip_header==NULL))
 		return NF_ACCEPT;
 	
 	local_ip=ip_header->saddr;
@@ -231,14 +231,13 @@ static unsigned int hook_func_in(unsigned int hooknum, struct sk_buff *skb, cons
 	struct pair_rx_context* pair_rxPtr=NULL;
 	struct pair_tx_context* pair_txPtr=NULL;
 	ktime_t now;
-	struct iphdr *ip_header;		//IP  header structure
+	struct iphdr *ip_header=NULL;	//IP  header structure
 	unsigned int local_ip;
 	unsigned int remote_ip;
-	//unsigned long flags;					//variable for save current states of irq
-	unsigned int bit=0;					//feedback information
+	unsigned long flags;	//variable for save current states of irq
+	unsigned int bit=0;	//feedback information
 	unsigned short int feedback=0;
-	unsigned int *ip_opt=NULL;
-	unsigned int ECN_fraction=0;
+	unsigned short int ECN_fraction=0;
 	
 	if(!in)
 		return NF_ACCEPT;
@@ -249,31 +248,28 @@ static unsigned int hook_func_in(unsigned int hooknum, struct sk_buff *skb, cons
 	ip_header=(struct iphdr *)skb_network_header(skb);
 
 	//The packet is not ip packet (e.g. ARP or others)
-	if (likely(!ip_header))
+	if (unlikely(ip_header==NULL))
 		return NF_ACCEPT;
 	
 	local_ip=ip_header->daddr;
 	remote_ip=ip_header->saddr;
 	//If it's control packet, we need to do some special operations here
-	if(unlikely((u8)(ip_header->protocol)==FEEDBACK_PACKET_IPPROTO))
+	if((u8)(ip_header->protocol)==FEEDBACK_PACKET_IPPROTO)
 	{
 		//Retrieve ECN fraction information
-		ip_opt=(unsigned int*)ip_header+sizeof(struct iphdr)/4;
-		if(ip_opt!=NULL)
+		ECN_fraction=ntohs(ip_header->id);
+		printk(KERN_INFO "Message packet, ECN fraction is %u\n",(unsigned int)ECN_fraction);
+		pair_txPtr=Search_tx_pair(txPtr,local_ip,remote_ip);
+		if(pair_txPtr!=NULL)
 		{
-			ECN_fraction=ntohl(*ip_opt);
-			pair_txPtr=Search_tx_pair(txPtr,local_ip,remote_ip);
-			if(pair_txPtr!=NULL)
+			if(ECN_fraction!=0)
 			{
-				if(ECN_fraction!=0)
-				{
-					//Set rate to guarantee bandwidth
-					pair_txPtr->rateLimiter.rate=pair_txPtr->guarantee_bw;
-				}
-				else 
-				{
-					pair_txPtr->rateLimiter.rate=elasticswitch_rc(pair_txPtr->rateLimiter.rate, LINK_CAPACITY);
-				}
+				//Set rate to guarantee bandwidth
+				pair_txPtr->rateLimiter.rate=pair_txPtr->guarantee_bw;
+			}	
+			else 
+			{
+				pair_txPtr->rateLimiter.rate=elasticswitch_rc(pair_txPtr->rateLimiter.rate, LINK_CAPACITY);
 			}
 		}
 		//We should not let any VM receive this packet
@@ -284,20 +280,20 @@ static unsigned int hook_func_in(unsigned int hooknum, struct sk_buff *skb, cons
 	if(likely(pair_rxPtr!=NULL))
 	{
 		spin_lock_bh(&(pair_rxPtr->pair_lock));
+		//spin_lock_irqsave(&(pair_rxPtr->pair_lock),flags);
 		//spin_lock_irqsave(&rxLock,flags);
 		now=ktime_get();
 		pair_rxPtr->last_update_time=now;
 		//If the interval is larger than control interval
 		if(ktime_us_delta(now,pair_rxPtr->start_update_time)>=CONTROL_INTERVAL_US)    
 		{
-			//We need to generate feedback packet now
-			feedback=1;
 			//Calculate the fraction of ECN marking in this control interval
-			//If pairPtr->stats.rx_bytes==0, bit=0 by default
 			if(pair_rxPtr->stats.rx_bytes>0)
 			{
 				bit=pair_rxPtr->stats.rx_ecn_bytes*100/pair_rxPtr->stats.rx_bytes;			
 				print_pair_rx_context(pair_rxPtr);
+				//We need to generate feedback packet now
+				feedback=1;
 			}
 			pair_rxPtr->stats.rx_bytes=0;
 			pair_rxPtr->stats.rx_ecn_bytes=0;
@@ -310,27 +306,24 @@ static unsigned int hook_func_in(unsigned int hooknum, struct sk_buff *skb, cons
 			pair_rxPtr->stats.rx_ecn_bytes+=skb->len;
 		}
 		spin_unlock_bh(&(pair_rxPtr->pair_lock));
+		//spin_unlock_irqrestore(&(pair_rxPtr->pair_lock),flags);
 		//spin_unlock_irqrestore(&rxLock,flags);
-		//Generate feedback packet now 
+		clear_ecn(skb);
+		//Generate feedback packet now. This function can only be called in LOCAL_IN. I don't know why.
 		if(feedback==1)
 			generate_feedback(bit,skb);
 	}
-	clear_ecn(skb);
 	return NF_ACCEPT;	
 }
 
 int init_module()
 {
-	//struct endpoint_rx_context* endpointPtr=NULL;
-	//struct pair_rx_context* pairPtr=NULL;  
-	//unsigned int local_ip,remote_ip;
-	//int i,j;
 	int i,ret;
 	
 	//Get interface
     if(param_dev==NULL) 
     {
-        printk(KERN_INFO "Trinity: not specify network interface.\n");
+        printk(KERN_INFO "Trinity: not specify network interface (choose eth1 by default)\n");
         param_dev = "eth1\0";
 	}
 	// trim 
@@ -345,26 +338,35 @@ int init_module()
 	
 	//Initialize RX context information
 	rxPtr=kmalloc(sizeof(struct rx_context), GFP_KERNEL);
+	if(rxPtr==NULL)
+	{
+		printk(KERN_INFO "Kmalloc error\n");
+		return 0;
+	}
 	Init_rx_context(rxPtr);
 	//Initialize rxLock
 	spin_lock_init(&rxLock);
 	
 	//Initialize tX context information
 	txPtr=kmalloc(sizeof(struct rx_context), GFP_KERNEL);
+	if(txPtr==NULL)
+	{
+		printk(KERN_INFO "Kmalloc error\n");
+		return 0;
+	}
 	Init_tx_context(txPtr);
-	//Initialize rxLock
+	//Initialize txLock
 	spin_lock_init(&txLock);
 	
-	//NF_PRE_ROUTING Hook
-	nfho_incoming.hook = hook_func_in;							
-	nfho_incoming.hooknum =  NF_INET_PRE_ROUTING;		
+	nfho_incoming.hook = hook_func_in;			
+	//If we intercept incoming packets in PRE_ROUTING, generate_feedback will crash	
+	nfho_incoming.hooknum =  NF_INET_LOCAL_IN;		
 	nfho_incoming.pf = PF_INET;											
 	nfho_incoming.priority = NF_IP_PRI_FIRST;			
 	nf_register_hook(&nfho_incoming);							
 	
-	//NF_POST_ROUTING Hook
 	nfho_outgoing.hook = hook_func_out;						
-	nfho_outgoing.hooknum =  NF_INET_POST_ROUTING;	
+	nfho_outgoing.hooknum =  NF_INET_LOCAL_OUT;	
 	nfho_outgoing.pf = PF_INET;											
 	nfho_outgoing.priority = NF_IP_PRI_FIRST;			
 	nf_register_hook(&nfho_outgoing);								
@@ -389,11 +391,16 @@ void cleanup_module()
 	nf_unregister_hook(&nfho_outgoing);  
 	nf_unregister_hook(&nfho_incoming);	
 	
-	Empty_rx_context(rxPtr);	
-	kfree(rxPtr);
-	Empty_tx_context(txPtr);
-	kfree(txPtr);
+	if(rxPtr!=NULL)
+	{
+		Empty_rx_context(rxPtr);	
+		kfree(rxPtr);
+	}
+	if(txPtr!=NULL)
+	{
+		Empty_tx_context(txPtr);
+		kfree(txPtr);
+	}
 	printk(KERN_INFO "Stop Trinity kernel module\n");
-	
 }
 

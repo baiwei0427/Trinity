@@ -11,11 +11,11 @@ static unsigned int generate_feedback(unsigned int bit, struct sk_buff *pkt)
 	struct sk_buff *skb;
 	struct ethhdr *eth_from;
 	struct iphdr *iph_to, *iph_from;
-	unsigned int *ip_opt=NULL;		  	
+	//unsigned int *ip_opt=NULL;		  	
 	unsigned int addr_type = RTN_LOCAL;
 			
 	eth_from = eth_hdr(pkt);
-	if(unlikely(eth_from->h_proto != __constant_htons(ETH_P_IP)))
+	if(unlikely(eth_from->h_proto!= __constant_htons(ETH_P_IP)))
 		return 0;
 	
 	iph_from=(struct iphdr *)skb_network_header(pkt);
@@ -31,7 +31,7 @@ static unsigned int generate_feedback(unsigned int bit, struct sk_buff *pkt)
 	iph_to->ihl=FEEDBACK_HEADER_SIZE/4;
 	iph_to->tos=FEEDBACK_PACKET_TOS; 
 	iph_to->tot_len =htons(FEEDBACK_HEADER_SIZE);
-	iph_to->id=0;
+	iph_to->id=htons((unsigned short int)bit);
 	iph_to->frag_off=0;
 	iph_to->protocol=(u8)FEEDBACK_PACKET_IPPROTO;
 	iph_to->check=0;
@@ -48,15 +48,15 @@ static unsigned int generate_feedback(unsigned int bit, struct sk_buff *pkt)
 	iph_to->ttl=ip4_dst_hoplimit(skb_dst(skb));	
 
 	//Set IP option
-	ip_opt=(unsigned int*)iph_to+sizeof(struct iphdr)/4;
-	*ip_opt=htonl(bit);
+	//ip_opt=(unsigned int*)iph_to+sizeof(struct iphdr)/4;
+	//*ip_opt=htonl(bit);
 	
 	/* "Never happens" */
 	if (skb->len > dst_mtu(skb_dst(skb)))
 		goto free_skb;
 	
 	ip_local_out(skb);
-	printk(KERN_INFO "Generate feedback packet\n");
+	printk(KERN_INFO "Generate feedback packet with bit=%u\n",bit);
 	return 1;
 
  free_skb:
