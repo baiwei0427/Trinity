@@ -164,7 +164,7 @@ static unsigned int Init_pair_tx_context(
 	INIT_LIST_HEAD(&(ptr->list));
 
 #ifdef TRINITY
-	if(unlikely(Init_dual_tbf(&(ptr->rateLimiter),bw,MINIMUM_RATE,bucket,bucket,max_len,max_len,flags)==0))
+	if(unlikely(Init_dual_tbf(&(ptr->rateLimiter),bw,0,bucket,bucket,max_len,max_len,flags)==0))
 	{
 		return 0;
 	}

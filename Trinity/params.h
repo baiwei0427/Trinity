@@ -18,11 +18,11 @@ const u8 BANDWIDTH_GUARANTEE_DSCP=0x1;
 const u8 WORK_CONSERVING_DSCP=0x0;
 
 /* The following parameters are used for rate control */
-const unsigned int LINK_CAPACITY=940; //Mbps
+const unsigned int LINK_CAPACITY=960; //Mbps
 const unsigned int ELASTICSWITCH_ALPHA=100;	//ALPHA/1000 is the actual factor
 const unsigned int TRINITY_ALPHA=500;
 const unsigned int MINIMUM_RATE_INCREASE=10;
-const unsigned int MINIMUM_RATE=20;
+//const unsigned int MINIMUM_RATE=10;
  
 
 #endif

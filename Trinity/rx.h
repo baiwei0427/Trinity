@@ -5,11 +5,22 @@
 #include <linux/time.h>  
 
 //Define the structure of RX statistics
+#ifdef TRINITY
+/* bg=bandwidth guarantee wc=work conserving */
+struct rx_stats
+{
+	unsigned long rx_bg_bytes;
+	unsigned long rx_bg_ecn_bytes;
+	unsigned long rx_wc_bytes;
+	unsigned long rx_wc_ecn_bytes;
+};
+#else
 struct rx_stats
 {
 	unsigned long rx_bytes;
 	unsigned long rx_ecn_bytes;
 };
+#endif
 
 //Define the structure of per VM-to-VM pair RX context
 struct pair_rx_context 
@@ -62,18 +73,43 @@ static void print_pair_rx_context(struct pair_rx_context* ptr)
 	unsigned int throughput=0;	//unit: Mbps
 	unsigned int fraction=0; //ECN marking fraction
 	unsigned long interval=(unsigned long)ktime_us_delta(ptr->last_update_time,ptr->start_update_time);
+	snprintf(local_ip, 16, "%pI4", &(ptr->local_ip));
+	snprintf(remote_ip, 16, "%pI4", &(ptr->remote_ip));
+
+#ifdef TRINITY
+	unsigned int wc_throughput=0;	
+	unsigned int wc_fraction=0;
 	
+	//ECN fraction of work conserving traffic
+	if(ptr->stats.rx_wc_bytes>0)
+	{
+		wc_fraction=ptr->stats.rx_wc_ecn_bytes*100/ptr->stats.rx_wc_bytes;
+	}
+	//total ECN fraction 
+	if(ptr->stats.rx_bg_bytes+ptr->stats.rx_wc_bytes>0)
+	{
+		fraction=(ptr->stats.rx_bg_ecn_bytes+ptr->stats.rx_wc_ecn_bytes)*100/(ptr->stats.rx_bg_bytes+ptr->stats.rx_wc_bytes);
+	}
+	//throughput
+	if(interval>0)
+	{
+		throughput=(ptr->stats.rx_bg_bytes+ptr->stats.rx_wc_bytes)*8/interval;	
+		wc_throughput=ptr->stats.rx_wc_bytes*8/interval;
+	}
+	printk(KERN_INFO "Trinity RX: %s to %s, ECN fraction %u%%, incoming throughput %u Mbps, ECN fraction of work conserving traffic %u%%, work conserving traffic throughput %u Mbps\n",remote_ip,local_ip,fraction,throughput,wc_fraction,wc_throughput);
+#else
+	//total ECN fraction 
 	if(ptr->stats.rx_bytes>0)
 	{
 		fraction=ptr->stats.rx_ecn_bytes*100/ptr->stats.rx_bytes;
 	}
+	//total throughput
 	if(interval>0)
 	{
 		throughput=ptr->stats.rx_bytes*8/interval;
 	}
-	snprintf(local_ip, 16, "%pI4", &(ptr->local_ip));
-	snprintf(remote_ip, 16, "%pI4", &(ptr->remote_ip));
-	printk(KERN_INFO "RX: %s to %s, ECN marking fraction %u%%, bandwidth guarantee is %u Mbps, actual incoming throughput is %u Mbps\n",remote_ip,local_ip,fraction,ptr->rate,throughput);
+	printk(KERN_INFO "ElasticSwitch RX: %s to %s, ECN fraction %u%%, incoming throughput %u Mbps\n",remote_ip,local_ip,fraction,throughput);
+#endif
 }
 
 static void print_endpoint_rx_context(struct endpoint_rx_context* ptr)
@@ -145,8 +181,15 @@ static unsigned int Init_pair_rx_context(struct pair_rx_context* ptr, unsigned i
 		ptr->local_ip=local_ip;
 		ptr->remote_ip=remote_ip;
 		ptr->rate=bw;
+#ifdef TRINITY
+		ptr->stats.rx_bg_bytes=0;
+		ptr->stats.rx_bg_ecn_bytes=0;
+		ptr->stats.rx_wc_bytes=0;
+		ptr->stats.rx_wc_ecn_bytes=0;
+#else
 		ptr->stats.rx_bytes=0;
 		ptr->stats.rx_ecn_bytes=0;
+#endif
 		//The last update time is set to current time
 		ptr->last_update_time=now;
 		ptr->start_update_time=now;

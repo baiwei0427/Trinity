@@ -241,7 +241,7 @@ static unsigned int hook_func_in(unsigned int hooknum, struct sk_buff *skb, cons
 	struct iphdr *ip_header=NULL;	//IP  header structure
 	unsigned int local_ip;
 	unsigned int remote_ip;
-	unsigned long flags;	//variable for save current states of irq
+	//unsigned long flags;	//variable for save current states of irq
 	unsigned int bit=0;	//feedback information
 	unsigned short int feedback=0;
 	unsigned short int ECN_fraction=0;
@@ -272,8 +272,8 @@ static unsigned int hook_func_in(unsigned int hooknum, struct sk_buff *skb, cons
 			if(ECN_fraction!=0)
 			{
 			#ifdef  TRINITY
-				//DCTCP-like rate control
-				pair_txPtr->rateLimiter.wc_rate=max((pair_txPtr->rateLimiter.wc_rate+pair_txPtr->rateLimiter.bg_rate)*(200-ECN_fraction)/200,pair_txPtr->guarantee_bw+MINIMUM_RATE)-pair_txPtr->guarantee_bw;
+				//DCTCP-like rate control for work conserving rate
+				pair_txPtr->rateLimiter.wc_rate=pair_txPtr->rateLimiter.wc_rate*(200-ECN_fraction)/200;//max(pair_txPtr->rateLimiter.wc_rate*(200-ECN_fraction)/200,MINIMUM_RATE);
 			#else
 				//Adjust rate to guarantee bandwidth
 				pair_txPtr->rateLimiter.rate=pair_txPtr->guarantee_bw;
@@ -282,7 +282,7 @@ static unsigned int hook_func_in(unsigned int hooknum, struct sk_buff *skb, cons
 			else 
 			{
 			#ifdef TRINITY
-				pair_txPtr->rateLimiter.wc_rate=max(cubic_rc(pair_txPtr->rateLimiter.bg_rate+pair_txPtr->rateLimiter.wc_rate, LINK_CAPACITY,TRINITY_ALPHA)-pair_txPtr->guarantee_bw,MINIMUM_RATE);
+				pair_txPtr->rateLimiter.wc_rate=cubic_rc(pair_txPtr->rateLimiter.bg_rate+pair_txPtr->rateLimiter.wc_rate, LINK_CAPACITY,TRINITY_ALPHA)-pair_txPtr->guarantee_bw;
 			#else
 				pair_txPtr->rateLimiter.rate=max(cubic_rc(pair_txPtr->rateLimiter.rate, LINK_CAPACITY,ELASTICSWITCH_ALPHA),MINIMUM_RATE);
 			#endif
@@ -302,13 +302,48 @@ static unsigned int hook_func_in(unsigned int hooknum, struct sk_buff *skb, cons
 		//If the interval is larger than control interval
 		if(ktime_us_delta(now,pair_rxPtr->start_update_time)>=CONTROL_INTERVAL_US)    
 		{
-			//Calculate the fraction of ECN marking in this control interval
-			if(pair_rxPtr->stats.rx_bytes>0)
+		#ifdef TRINITY
+			if(pair_rxPtr->stats.rx_wc_bytes+pair_rxPtr->stats.rx_bg_bytes>0)
 			{
-				bit=pair_rxPtr->stats.rx_ecn_bytes*100/pair_rxPtr->stats.rx_bytes;			
 				print_pair_rx_context(pair_rxPtr);
 				//We need to generate feedback packet now
 				feedback=1;
+				//Calculate the ECN fraction of work conserving traffic in this control interval
+				if(pair_rxPtr->stats.rx_wc_bytes>0)
+				{
+					bit=pair_rxPtr->stats.rx_wc_ecn_bytes*100/pair_rxPtr->stats.rx_wc_bytes;
+				}
+			}
+			pair_rxPtr->stats.rx_bg_bytes=0;
+			pair_rxPtr->stats.rx_bg_ecn_bytes=0;
+			pair_rxPtr->stats.rx_wc_bytes=0;
+			pair_rxPtr->stats.rx_wc_ecn_bytes=0;
+			pair_rxPtr->start_update_time=now;
+		}
+		//Bandwidth guarantee traffic
+		if((ip_header->tos>>2)==BANDWIDTH_GUARANTEE_DSCP)
+		{
+			pair_rxPtr->stats.rx_bg_bytes+=skb->len;
+			//ECN
+			if((ip_header->tos<<6)==0xc0)
+				pair_rxPtr->stats.rx_bg_ecn_bytes+=skb->len;
+		}
+		//Work conserving traffic
+		else
+		{
+			pair_rxPtr->stats.rx_wc_bytes+=skb->len;
+			//ECN
+			if((ip_header->tos<<6)==0xc0)
+				pair_rxPtr->stats.rx_wc_ecn_bytes+=skb->len;
+		}
+		#else
+			if(pair_rxPtr->stats.rx_bytes>0)
+			{
+				print_pair_rx_context(pair_rxPtr);
+				//We need to generate feedback packet now
+				feedback=1;
+				//Calculate the ECN fraction in this control interval
+				bit=pair_rxPtr->stats.rx_ecn_bytes*100/pair_rxPtr->stats.rx_bytes;			
 			}
 			pair_rxPtr->stats.rx_bytes=0;
 			pair_rxPtr->stats.rx_ecn_bytes=0;
@@ -320,6 +355,7 @@ static unsigned int hook_func_in(unsigned int hooknum, struct sk_buff *skb, cons
 		{
 			pair_rxPtr->stats.rx_ecn_bytes+=skb->len;
 		}
+		#endif
 		spin_unlock_bh(&(pair_rxPtr->pair_lock));
 		//spin_unlock_irqrestore(&rxLock,flags);
 		clear_ecn(skb);
