@@ -2,6 +2,7 @@
 #define	TX_H
 
 #include "tbf.h"
+#include "dual_tbf.h"
 
 //Define the structure of per VM-to-VM pair TX context
 struct pair_tx_context 
@@ -12,8 +13,13 @@ struct pair_tx_context
 	unsigned int guarantee_bw;
 	//Structure of link list
 	struct list_head list;
+#ifdef TRINITY
+	//Dual token bucket rate limiter
+	struct dual_tbf_rl rateLimiter;
+#else
 	//Token bucket rate limiter
 	struct tbf_rl rateLimiter;
+#endif
 	//We use tasklet(softirq) rather than hardirq context of hrtimer to implement rate limiting
 	struct tasklet_struct xmit_timeout;
 	//Timer for rate limiting
@@ -57,7 +63,11 @@ static void print_pair_tx_context(struct pair_tx_context* ptr)
 	char remote_ip[16]={0};
 	snprintf(local_ip, 16, "%pI4", &(ptr->local_ip));
 	snprintf(remote_ip, 16, "%pI4", &(ptr->remote_ip));
-	printk(KERN_INFO "TX: %s to %s, bandwidth guarantee is %u Mbps, actual rate is %u Mbps\n",local_ip,remote_ip,ptr->guarantee_bw,ptr->rateLimiter.rate);
+#ifdef TRINITY
+	printk(KERN_INFO "Trinity TX: %s to %s, bandwidth guarantee rate is %u Mbps, work conserving rate is %u Mbps\n",local_ip,remote_ip,ptr->rateLimiter.bg_rate,ptr->rateLimiter.wc_rate);
+#else
+	printk(KERN_INFO "ElasticSwitch TX: %s to %s, bandwidth guarantee rate is %u Mbps, actual rate is %u Mbps\n",local_ip,remote_ip,ptr->guarantee_bw,ptr->rateLimiter.rate);
+#endif
 }
 
 static void print_endpoint_tx_context(struct endpoint_tx_context* ptr)
@@ -152,12 +162,19 @@ static unsigned int Init_pair_tx_context(
 	ptr->remote_ip=remote_ip;	
 	ptr->guarantee_bw=bw;
 	INIT_LIST_HEAD(&(ptr->list));
-	
+
+#ifdef TRINITY
+	if(unlikely(Init_dual_tbf(&(ptr->rateLimiter),bw,MINIMUM_RATE,bucket,bucket,max_len,max_len,flags)==0))
+	{
+		return 0;
+	}
+#else
 	//Initialize rate limiter of the pair TX context. We set rate to guarantee_bw initially. 
 	if(unlikely(Init_tbf(&(ptr->rateLimiter),bw,bucket,max_len,flags)==0))
 	{
 		return 0;
 	}
+#endif
 	//Initialize tasklet 
 	tasklet_init(&(ptr->xmit_timeout), *tasklet_func, (unsigned long)ptr);
 	//Initialize hrtimer
@@ -177,8 +194,11 @@ static void Free_pair_tx_context(struct pair_tx_context* ptr)
 	{
 		hrtimer_cancel(&(ptr->timer));
 		tasklet_kill(&(ptr->xmit_timeout));
+	#ifdef TRINITY
+		Free_dual_tbf(&(ptr->rateLimiter));
+	#else
 		Free_tbf(&(ptr->rateLimiter));
-		//kfree(ptr->tbfPtr);
+	#endif
 	}
 } 
 

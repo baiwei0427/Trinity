@@ -64,10 +64,19 @@ static unsigned int generate_feedback(unsigned int bit, struct sk_buff *pkt)
 	return 0;
 }
 
+static void enable_ecn_dscp(struct sk_buff *skb, u8 dscp)
+{
+	struct iphdr *iph =ip_hdr(skb);
+	if(likely(iph!=NULL))
+	{
+		ipv4_change_dsfield(iph, 0xff, (dscp<<2)|INET_ECN_ECT_0);
+	}
+}
+
 static void enable_ecn(struct sk_buff *skb)
 {
 	struct iphdr *iph =ip_hdr(skb);
-	if(iph!=NULL)
+	if(likely(iph!=NULL))
 	{
 		ipv4_change_dsfield(iph, 0xff, iph->tos | INET_ECN_ECT_0);
 	}
@@ -76,7 +85,7 @@ static void enable_ecn(struct sk_buff *skb)
 static void clear_ecn(struct sk_buff *skb)
 {
 	struct iphdr *iph=ip_hdr(skb);
-	if(iph!=NULL)
+	if(likely(iph!=NULL))
 	{
 		ipv4_change_dsfield(iph, 0xff, iph->tos & ~0x3);
 	}

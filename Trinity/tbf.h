@@ -1,6 +1,9 @@
 #ifndef TBF_H
 #define TBF_H
 
+#include "network.h" 
+#include "params.h"
+
 /* Structure of sk_buff and the function pointer to reinject packets */
 struct Packet
 {
@@ -94,6 +97,8 @@ static unsigned int Dequeue_tbf(struct tbf_rl* tbfPtr)
 	if(tbfPtr->len>0) 
     {
 		tbfPtr->len--;
+		//Modify packet DSCP and enable ECN
+		enable_ecn_dscp(tbfPtr->packets[tbfPtr->head].skb,WORK_CONSERVING_DSCP);
 		//Dequeue packet
 		(tbfPtr->packets[tbfPtr->head].okfn)(tbfPtr->packets[tbfPtr->head].skb);
 		//Reinject head packet of current queue

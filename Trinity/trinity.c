@@ -33,11 +33,11 @@
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("BAI Wei wbaiab@cse.ust.hk");
 MODULE_VERSION("1.0");
-MODULE_DESCRIPTION("Kernel module of  Trinity");
+MODULE_DESCRIPTION("Kernel module of  Trinity/ElasticSwitch");
 MODULE_SUPPORTED_DEVICE(DEVICE_NAME)
 
 static char *param_dev=NULL;
-MODULE_PARM_DESC(param_dev, "Interface to operate Trinity");
+MODULE_PARM_DESC(param_dev, "Network interface to operate");
 module_param(param_dev, charp, 0);
 
 //Open virtual characer device "/dev/trinity"
@@ -213,9 +213,16 @@ static unsigned int hook_func_out(unsigned int hooknum, struct sk_buff *skb, con
 	
 	if(likely(pair_txPtr!=NULL))
 	{
+	#ifdef TRINITY
+		//Enqueue to large flow queue
+		spin_lock_bh(&(pair_txPtr->rateLimiter.large_lock));
+		result=Enqueue_dual_tbf(&(pair_txPtr->rateLimiter),skb,okfn,0);
+		spin_unlock_bh(&(pair_txPtr->rateLimiter.large_lock));
+	#else
 		spin_lock_bh(&(pair_txPtr->rateLimiter.rl_lock));
 		result=Enqueue_tbf(&(pair_txPtr->rateLimiter),skb,okfn);
 		spin_unlock_bh(&(pair_txPtr->rateLimiter.rl_lock));
+	#endif
 		//If enqueue succeeds
 		if(result==1)
 			return NF_STOLEN;
@@ -258,18 +265,27 @@ static unsigned int hook_func_in(unsigned int hooknum, struct sk_buff *skb, cons
 	{
 		//Retrieve ECN fraction information
 		ECN_fraction=ntohs(ip_header->id);
-		printk(KERN_INFO "Message packet, ECN fraction is %u\n",(unsigned int)ECN_fraction);
+		printk(KERN_INFO "Receive control message packet, ECN fraction is %u%%\n",(unsigned int)ECN_fraction);
 		pair_txPtr=Search_tx_pair(txPtr,local_ip,remote_ip);
 		if(pair_txPtr!=NULL)
 		{
 			if(ECN_fraction!=0)
 			{
-				//Set rate to guarantee bandwidth
+			#ifdef  TRINITY
+				//DCTCP-like rate control
+				pair_txPtr->rateLimiter.wc_rate=max((pair_txPtr->rateLimiter.wc_rate+pair_txPtr->rateLimiter.bg_rate)*(200-ECN_fraction)/200,pair_txPtr->guarantee_bw+MINIMUM_RATE)-pair_txPtr->guarantee_bw;
+			#else
+				//Adjust rate to guarantee bandwidth
 				pair_txPtr->rateLimiter.rate=pair_txPtr->guarantee_bw;
+			#endif
 			}	
 			else 
 			{
-				pair_txPtr->rateLimiter.rate=elasticswitch_rc(pair_txPtr->rateLimiter.rate, LINK_CAPACITY);
+			#ifdef TRINITY
+				pair_txPtr->rateLimiter.wc_rate=max(cubic_rc(pair_txPtr->rateLimiter.bg_rate+pair_txPtr->rateLimiter.wc_rate, LINK_CAPACITY,TRINITY_ALPHA)-pair_txPtr->guarantee_bw,MINIMUM_RATE);
+			#else
+				pair_txPtr->rateLimiter.rate=max(cubic_rc(pair_txPtr->rateLimiter.rate, LINK_CAPACITY,ELASTICSWITCH_ALPHA),MINIMUM_RATE);
+			#endif
 			}
 		}
 		//We should not let any VM receive this packet
@@ -280,7 +296,6 @@ static unsigned int hook_func_in(unsigned int hooknum, struct sk_buff *skb, cons
 	if(likely(pair_rxPtr!=NULL))
 	{
 		spin_lock_bh(&(pair_rxPtr->pair_lock));
-		//spin_lock_irqsave(&(pair_rxPtr->pair_lock),flags);
 		//spin_lock_irqsave(&rxLock,flags);
 		now=ktime_get();
 		pair_rxPtr->last_update_time=now;
@@ -306,7 +321,6 @@ static unsigned int hook_func_in(unsigned int hooknum, struct sk_buff *skb, cons
 			pair_rxPtr->stats.rx_ecn_bytes+=skb->len;
 		}
 		spin_unlock_bh(&(pair_rxPtr->pair_lock));
-		//spin_unlock_irqrestore(&(pair_rxPtr->pair_lock),flags);
 		//spin_unlock_irqrestore(&rxLock,flags);
 		clear_ecn(skb);
 		//Generate feedback packet now. This function can only be called in LOCAL_IN. I don't know why.
@@ -323,7 +337,11 @@ int init_module()
 	//Get interface
     if(param_dev==NULL) 
     {
+	#ifdef TRINITY
         printk(KERN_INFO "Trinity: not specify network interface (choose eth1 by default)\n");
+	#else
+		printk(KERN_INFO "ElasticSwitch: not specify network interface (choose eth1 by default)\n");
+	#endif
         param_dev = "eth1\0";
 	}
 	// trim 
@@ -379,7 +397,11 @@ int init_module()
 		return ret;
 	}
 	printk(KERN_INFO "Register char device successfully with %d\n", MAJOR_NUM);
+#ifdef TRINITY
 	printk(KERN_INFO "Start Trinity kernel module\n");
+#else
+	printk(KERN_INFO "Start ElasticSwitch kernel module\n");
+#endif
 	return SUCCESS;
 }
 
@@ -401,6 +423,10 @@ void cleanup_module()
 		Empty_tx_context(txPtr);
 		kfree(txPtr);
 	}
+#ifdef TRINITY
 	printk(KERN_INFO "Stop Trinity kernel module\n");
+#else
+	printk(KERN_INFO "Stop ElasticSwitch kernel module\n");
+#endif
 }
 
