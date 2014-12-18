@@ -289,9 +289,18 @@ static unsigned int hook_func_out(unsigned int hooknum, struct sk_buff *skb, con
 			}
 		}
 		//Enqueue to small/large flow queue
-		spin_lock_bh(&(pair_txPtr->rateLimiter.large_lock));
-		result=Enqueue_dual_tbf(&(pair_txPtr->rateLimiter),skb,okfn,is_small);
-		spin_unlock_bh(&(pair_txPtr->rateLimiter.large_lock));
+		if(is_small==1)
+		{
+			spin_lock_bh(&(pair_txPtr->rateLimiter.small_lock));
+			result=Enqueue_dual_tbf(&(pair_txPtr->rateLimiter),skb,okfn,is_small);
+			spin_unlock_bh(&(pair_txPtr->rateLimiter.small_lock));
+		}
+		else
+		{
+			spin_lock_bh(&(pair_txPtr->rateLimiter.large_lock));
+			result=Enqueue_dual_tbf(&(pair_txPtr->rateLimiter),skb,okfn,is_small);
+			spin_unlock_bh(&(pair_txPtr->rateLimiter.large_lock));
+		}
 	#else
 		spin_lock_bh(&(pair_txPtr->rateLimiter.rl_lock));
 		result=Enqueue_tbf(&(pair_txPtr->rateLimiter),skb,okfn);
@@ -358,7 +367,7 @@ static unsigned int hook_func_in(unsigned int hooknum, struct sk_buff *skb, cons
 			#ifdef TRINITY
 				pair_txPtr->rateLimiter.wc_rate=cubic_rc(pair_txPtr->rateLimiter.bg_rate+pair_txPtr->rateLimiter.wc_rate, LINK_CAPACITY,TRINITY_ALPHA)-pair_txPtr->guarantee_bw;
 			#else
-				pair_txPtr->rateLimiter.rate=max(cubic_rc(pair_txPtr->rateLimiter.rate, LINK_CAPACITY,ELASTICSWITCH_ALPHA),MINIMUM_RATE);
+				pair_txPtr->rateLimiter.rate=cubic_rc(pair_txPtr->rateLimiter.rate, LINK_CAPACITY,ELASTICSWITCH_ALPHA);
 			#endif
 			}
 		}
