@@ -23,6 +23,9 @@ const unsigned int ELASTICSWITCH_ALPHA=100;	//ALPHA/1000 is the actual factor
 const unsigned int TRINITY_ALPHA=500;
 const unsigned int MINIMUM_RATE_INCREASE=10;
 //const unsigned int MINIMUM_RATE=10;
- 
 
+/* The following parameters are used for maintaing flow states */
+const unsigned int MAX_BYTES_SENT=4294900000;
+const unsigned int FLOW_THRESH=100*1024;
+ 
 #endif

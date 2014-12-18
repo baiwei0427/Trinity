@@ -30,10 +30,16 @@
 #include "params.h"
 #include "control.h"
 
+//Trinity needs to maintain per-flow state.
+#ifdef TRINITY
+#include "flow.h"
+#include "hash.h"
+#endif
+
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("BAI Wei wbaiab@cse.ust.hk");
 MODULE_VERSION("1.0");
-MODULE_DESCRIPTION("Kernel module of  Trinity/ElasticSwitch");
+MODULE_DESCRIPTION("Kernel module of Trinity/ElasticSwitch");
 MODULE_SUPPORTED_DEVICE(DEVICE_NAME)
 
 static char *param_dev=NULL;
@@ -54,11 +60,15 @@ static struct nf_hook_ops nfho_incoming;
 //RX context pointer
 static struct rx_context* rxPtr;
 //Lock for rx information 
-static spinlock_t rxLock;
+//static spinlock_t rxLock;
 //TX context pointer
 static struct tx_context* txPtr;
 //Lock for TX information
-static spinlock_t txLock;
+//static spinlock_t txLock;
+#ifdef TRINITY
+//FlowTable
+static struct FlowTable ft;
+#endif
 
 static int device_open(struct inode *inode, struct file *file) 
 {
@@ -194,6 +204,14 @@ static unsigned int hook_func_out(unsigned int hooknum, struct sk_buff *skb, con
 	unsigned int local_ip;
 	unsigned int remote_ip;
 	unsigned int result;
+#ifdef TRINITY
+	struct Flow f;										
+	struct Information* info_pointer=NULL;	
+	struct tcphdr *tcp_header=NULL;
+	unsigned int delete_result;
+	unsigned int payload_len;		
+	unsigned int is_small=0;
+#endif
 	
 	if(!out)
 		return NF_ACCEPT;
@@ -214,9 +232,65 @@ static unsigned int hook_func_out(unsigned int hooknum, struct sk_buff *skb, con
 	if(likely(pair_txPtr!=NULL))
 	{
 	#ifdef TRINITY
-		//Enqueue to large flow queue
+		//Update per-flow state and determine whether this TCP flow is small or large
+		//If it is not a TCP packet, just enquue to large flow queue by default
+		if(ip_header->protocol==IPPROTO_TCP)
+		{
+			tcp_header = (struct tcphdr *)((__u32 *)ip_header+ ip_header->ihl);
+			Init_Flow(&f);
+			f.local_ip=ip_header->saddr;
+			f.remote_ip=ip_header->daddr;
+			f.local_port=ntohs(tcp_header->source);
+			f.remote_port=ntohs(tcp_header->dest);
+			if(tcp_header->syn)
+			{
+				spin_lock_bh(&(ft.table_lock));
+				//We should set flags=GFP_ATOMIC in soft irq context
+				if(Insert_Table(&ft,&f,GFP_ATOMIC)==0)
+				{
+					printk(KERN_INFO "Insert fail\n");
+				}
+				spin_unlock_bh(&(ft.table_lock));
+				//The first packet must be enqueued to short flow queue
+				is_small=1;
+			}
+			else if(tcp_header->fin||tcp_header->rst)
+			{
+				spin_lock_bh(&(ft.table_lock));
+				delete_result=Delete_Table(&ft,&f);
+				if(delete_result==0)
+				{
+					printk(KERN_INFO "Delete fail\n");
+				}
+				spin_unlock_bh(&(ft.table_lock));
+				if(delete_result<FLOW_THRESH)
+				{
+					is_small=1;
+				}
+			}
+			else
+			{
+				spin_lock_bh(&(ft.table_lock));
+				info_pointer=Search_Table(&ft,&f);
+				spin_unlock_bh(&(ft.table_lock));
+				if(info_pointer!=NULL)
+				{
+					//TCP payload length=Total length - IP header length-TCP header length
+					payload_len= (unsigned int)ntohs(ip_header->tot_len)-(ip_header->ihl<<2)-(tcp_header->doff<<2);    
+					//payload length>0 and info_pointer->send_data will not exceed the maximum value of unsigned int  (4,294,967,295)
+					if(payload_len>0 && payload_len+info_pointer->send_data<MAX_BYTES_SENT)
+					{
+						info_pointer->last_update_time=ktime_get();
+						info_pointer->send_data+=payload_len;
+						if(info_pointer->send_data<FLOW_THRESH)
+							is_small=1;
+					}
+				}
+			}
+		}
+		//Enqueue to small/large flow queue
 		spin_lock_bh(&(pair_txPtr->rateLimiter.large_lock));
-		result=Enqueue_dual_tbf(&(pair_txPtr->rateLimiter),skb,okfn,0);
+		result=Enqueue_dual_tbf(&(pair_txPtr->rateLimiter),skb,okfn,is_small);
 		spin_unlock_bh(&(pair_txPtr->rateLimiter.large_lock));
 	#else
 		spin_lock_bh(&(pair_txPtr->rateLimiter.rl_lock));
@@ -399,7 +473,7 @@ int init_module()
 	}
 	Init_rx_context(rxPtr);
 	//Initialize rxLock
-	spin_lock_init(&rxLock);
+	//spin_lock_init(&rxLock);
 	
 	//Initialize tX context information
 	txPtr=kmalloc(sizeof(struct rx_context), GFP_KERNEL);
@@ -410,7 +484,11 @@ int init_module()
 	}
 	Init_tx_context(txPtr);
 	//Initialize txLock
-	spin_lock_init(&txLock);
+	//spin_lock_init(&txLock);
+#ifdef TRINITY
+	//Initialize FlowTable
+	Init_Table(&ft);
+#endif
 	
 	nfho_incoming.hook = hook_func_in;			
 	//If we intercept incoming packets in PRE_ROUTING, generate_feedback will crash	
@@ -448,7 +526,12 @@ void cleanup_module()
 	//Unregister two hooks
 	nf_unregister_hook(&nfho_outgoing);  
 	nf_unregister_hook(&nfho_incoming);	
-	
+
+#ifdef TRINITY
+	//Clear table
+	 Empty_Table(&ft);
+#endif
+	 
 	if(rxPtr!=NULL)
 	{
 		Empty_rx_context(rxPtr);	
@@ -459,6 +542,7 @@ void cleanup_module()
 		Empty_tx_context(txPtr);
 		kfree(txPtr);
 	}
+	
 #ifdef TRINITY
 	printk(KERN_INFO "Stop Trinity kernel module\n");
 #else
